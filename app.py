@@ -1,13 +1,26 @@
-from flask import Flask, render_template, request, redirect, session, Response
+from flask import Flask, render_template, request, redirect, session, Response, jsonify, send_from_directory
 import psycopg2
 import cv2
 import numpy as np
-from flask import jsonify
 import time
+import os
+from datetime import datetime
 
 app = Flask(__name__)
 app.secret_key = "secretkey123"
-blur_background = False
+
+# =========================
+# GLOBAL RECORDING STATE
+# =========================
+is_recording = False
+video_writer = None
+
+# =========================
+# FACE DETECTION SETUP
+# =========================
+face_cascade = cv2.CascadeClassifier(
+    cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+)
 
 # =========================
 # POSTGRESQL CONNECTION
@@ -19,25 +32,27 @@ conn = psycopg2.connect(
     password="admin123",
     port="5432"
 )
-
 cursor = conn.cursor()
 
 # =========================
 # CAMERA SETUP
 # =========================
-# 0 = local webcam
-# Replace with RTSP link later if needed
 camera = cv2.VideoCapture(0)
 
 if not camera.isOpened():
     print("Warning: Camera not available")
+
+FRAME_WIDTH = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
+FRAME_HEIGHT = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
+CAM_RES = f"{FRAME_WIDTH}x{FRAME_HEIGHT}"
+CAM_FPS_DEFAULT = 30
 
 
 # =========================
 # VIDEO STREAM FUNCTION
 # =========================
 def generate_frames():
-    global blur_background
+    global is_recording, video_writer
     prev_time = 0
 
     while True:
@@ -45,242 +60,170 @@ def generate_frames():
         if not success:
             break
 
-        output_frame = frame.copy()
-
         # --- CALCULATE REAL FPS ---
         current_time = time.time()
-        # Calculate the difference in time
-        fps_real = 1 / (current_time - prev_time)
+        fps_real = 1 / (current_time - prev_time) if (current_time - prev_time) > 0 else 30
         prev_time = current_time
 
-        # --- FACE DETECTION & BLUR LOGIC ONLY ---
+        output_frame = frame.copy()
+
+        # --- FACE DETECTION ---
         gray = cv2.cvtColor(output_frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(30, 30))
+        gray = cv2.equalizeHist(gray)
+        faces = face_cascade.detectMultiScale(
+            gray, scaleFactor=1.1, minNeighbors=8, minSize=(50, 50)
+        )
 
-        if blur_background:
-            blurred_frame = cv2.GaussianBlur(output_frame, (55, 55), 0)
-            temp_frame = blurred_frame.copy()
-            for (x, y, w, h) in faces:
-                temp_frame[y:y + h, x:x + w] = output_frame[y:y + h, x:x + w]
-                cv2.rectangle(temp_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            output_frame = temp_frame
-        else:
-            for (x, y, w, h) in faces:
-                cv2.rectangle(output_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        for (x, y, w, h) in faces:
+            cv2.rectangle(output_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.putText(output_frame, "FACE DETECTED", (x, y - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-        # --- ENCODE AND YIELD (No Timestamp) ---
+        # --- PERSISTENT RECORDING LOGIC (UPDATED) ---
+        if is_recording and video_writer is not None:
+            # Only attempt to write if the writer is properly opened
+            if video_writer.isOpened():
+                try:
+                    video_writer.write(output_frame)
+                except Exception as e:
+                    print(f"OpenCV Write Error: {e}")
+                    # If it crashes once, stop recording to save the stream
+                    is_recording = False
+            else:
+                # If we get here, the codec failed to start
+                print("VideoWriter is not opened. Check codec compatibility.")
+                is_recording = False
+
+        # --- ENCODE AND YIELD ---
         ret, buffer = cv2.imencode('.jpg', output_frame)
         if not ret:
             continue
 
         frame_bytes = buffer.tobytes()
         yield (b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-# =========================
-# LOGIN ROUTE
-# =========================
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-
-    if request.method == 'POST':
-
-        username = request.form['username']
-        password = request.form['password']
-
-        cursor.execute(
-            "SELECT * FROM users WHERE username=%s AND password=%s",
-            (username, password)
-        )
-
-        user = cursor.fetchone()
-
-        if user:
-
-            session['user'] = username
-
-            # SAVE LOGIN LOG
-            cursor.execute(
-                "INSERT INTO login_logs (username) VALUES (%s)",
-                (username,)
-            )
-
-            conn.commit()
-
-            return redirect('/')
-
-        else:
-
-            return render_template(
-                'login.html',
-                error="Invalid username or password"
-            )
-
-    return render_template('login.html')
-
 
 # =========================
-# REGISTER ROUTE
+# RECORDING & GALLERY ROUTES
 # =========================
-@app.route('/register', methods=['GET', 'POST'])
-def register():
 
-    if request.method == 'POST':
+@app.route('/start_recording')
+def start_recording():
+    global is_recording, video_writer
+    if not is_recording:
+        if not os.path.exists('recordings'):
+            os.makedirs('recordings')
 
-        username = request.form['username']
-        password = request.form['password']
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Switching back to .mp4 but using a more generic codec
+        filename = f"recordings/capture_{timestamp}.mp4"
 
-        # Check if username already exists
-        cursor.execute(
-            "SELECT * FROM users WHERE username=%s",
-            (username,)
-        )
+        # DIVX is very stable on Windows/OpenCV
+        fourcc = cv2.VideoWriter_fourcc(*'DIVX')
 
-        existing_user = cursor.fetchone()
+        video_writer = cv2.VideoWriter(filename, fourcc, 20.0, (FRAME_WIDTH, FRAME_HEIGHT))
 
-        if existing_user:
-            return render_template(
-                'register.html',
-                error="Username already exists"
-            )
+        # Check if it actually opened to prevent the C++ crash
+        if not video_writer.isOpened():
+            print("Error: VideoWriter failed to open.")
+            return jsonify({"status": "error", "message": "Codec not supported"}), 500
 
-        # Insert new user
-        cursor.execute(
-            "INSERT INTO users (username, password) VALUES (%s, %s)",
-            (username, password)
-        )
+        is_recording = True
+        print(f"Recording started: {filename}")
 
-        conn.commit()
+    return jsonify({"status": "success"})
 
+
+@app.route('/stop_recording')
+def stop_recording():
+    global is_recording, video_writer
+    is_recording = False
+    if video_writer:
+        video_writer.release()
+        video_writer = None
+        print("Recording stopped.")
+    return jsonify({"status": "success", "is_recording": False})
+
+
+@app.route('/recordings_gallery')
+def recordings_gallery():
+    if 'user' not in session:
         return redirect('/login')
 
-    return render_template('register.html')
+    files = []
+    if os.path.exists('recordings'):
+        # List both webm and mp4 (if you have old ones)
+        files = [f for f in os.listdir('recordings') if f.endswith(('.webm', '.mp4'))]
+        files.sort(reverse=True)
+
+    return render_template('recordings_gallery.html', files=files, user=session['user'])
+
+
+@app.route('/video_file/<filename>')
+def video_file(filename):
+    if 'user' not in session:
+        return redirect('/login')
+    return send_from_directory('recordings', filename)
 
 
 # =========================
-# DASHBOARD
+# STANDARD ROUTES
 # =========================
-from datetime import datetime
 
 @app.route('/')
 def dashboard():
-    # Protect dashboard
     if 'user' not in session:
         return redirect('/login')
-
     try:
         cursor.execute("SELECT * FROM camera_logs ORDER BY id DESC")
-        raw_logs = cursor.fetchall()
-
-        # Ensure timestamps are datetime objects for Jinja2
+        logs = cursor.fetchall()
+    except:
         logs = []
-        for row in raw_logs:
-            temp_list = list(row)
-            # If the timestamp (index 3) is a string, convert it
-            if len(temp_list) > 3 and isinstance(temp_list[3], str):
-                try:
-                    # Adjust format if your DB uses a different string format
-                    temp_list[3] = datetime.strptime(temp_list[3], '%Y-%m-%d %H:%M:%S.%f')
-                except ValueError:
-                    temp_list[3] = datetime.strptime(temp_list[3], '%Y-%m-%d %H:%M:%S')
-            logs.append(temp_list)
+    return render_template('dashboard.html', logs=logs, user=session['user'])
 
-    except Exception as e:
-        print("Database error:", e)
-        logs = []
 
-    return render_template(
-        'dashboard.html',
-        logs=logs,
-        user=session['user']
-    )
-
-# =========================
-# VIDEO STREAM ROUTE
-# =========================
 @app.route('/video')
 def video():
-
     if 'user' not in session:
         return redirect('/login')
-
-    return Response(
-        generate_frames(),
-        mimetype='multipart/x-mixed-replace; boundary=frame'
-    )
+    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
-# =========================
-# LOGOUT ROUTE
-# =========================
-@app.route('/logout')
-def logout():
-
-    session.pop('user', None)
-
-    return redirect('/login')
-
-camera = cv2.VideoCapture(0)
-# Cache these values so we don't ask the hardware every second
-CAM_RES = f"{int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))}"
-CAM_FPS = int(camera.get(cv2.CAP_PROP_FPS))
-if CAM_FPS <= 0: CAM_FPS = 30 # Standard fallback
-
-# =========================
-# CAMERA MONITORING ROUTE
-# =========================
 @app.route('/camera_monitoring')
 def camera_monitoring():
     if 'user' not in session:
         return redirect('/login')
-
-    # Get actual resolution from the camera object
-    width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    res_string = f"{width}x{height}"
-
-
-    # Get the codec/format (usually MJPEG for webcams)
-    # This is a bit advanced, so we can also check if the camera is opened
-    stream_type = "MJPEG (Live)" if camera.isOpened() else "Disconnected"
-
     return render_template(
         'camera_monitoring.html',
         user=session['user'],
-        blur_background=blur_background,
         resolution=CAM_RES,
         stream_type="MJPEG (Live)",
-        fps=CAM_FPS  # <-- This name MUST match the HTML
+        fps=CAM_FPS_DEFAULT,
+        is_recording=is_recording
     )
 
-# =========================
-# DEVICE MANAGEMENT ROUTE
-# =========================
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username, password = request.form['username'], request.form['password']
+        cursor.execute("SELECT * FROM users WHERE username=%s AND password=%s", (username, password))
+        if cursor.fetchone():
+            session['user'] = username
+            cursor.execute("INSERT INTO login_logs (username) VALUES (%s)", (username,))
+            conn.commit()
+            return redirect('/')
+    return render_template('login.html')
+
 @app.route('/device_management')
 def device_management():
-
-    # Protect page
     if 'user' not in session:
         return redirect('/login')
 
+    # This matches the list shown in your original screenshot
     devices = [
-
-        {
-            "name": "Router",
-            "ip": "192.168.1.1",
-            "status": "ONLINE"
-        },
-
-        {
-            "name": "IP Camera",
-            "ip": "192.168.1.10",
-            "status": "ONLINE"
-        },
-
-        {
-            "name": "Web Server",
-            "ip": "192.168.1.20",
-            "status": "ONLINE"
-        }
-
+        {"name": "Router", "ip": "192.168.1.1", "status": "ONLINE"},
+        {"name": "IP Camera", "ip": "192.168.1.10", "status": "ONLINE"},
+        {"name": "Web Server", "ip": "192.168.1.20", "status": "ONLINE"}
     ]
 
     return render_template(
@@ -289,28 +232,13 @@ def device_management():
         user=session['user']
     )
 
-
-# =========================
-# FACE DETECTION
-# =========================
-face_cascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades +
-    'haarcascade_frontalface_default.xml'
-)
-
-# =========================
-# LOGIN LOGS PAGE
-# =========================
 @app.route('/login_logs')
 def login_logs():
-
     if 'user' not in session:
         return redirect('/login')
 
-    cursor.execute(
-        "SELECT * FROM login_logs ORDER BY login_time DESC"
-    )
-
+    # Fetching logs ordered by the most recent first
+    cursor.execute("SELECT * FROM login_logs ORDER BY login_time DESC")
     logs = cursor.fetchall()
 
     return render_template(
@@ -319,25 +247,11 @@ def login_logs():
         user=session['user']
     )
 
-# =========================
-# TOGGLE BLUR BACKGROUND
-# =========================
+@app.route('/logout')
+def logout():
+    session.pop('user', None)
+    return redirect('/login')
 
 
-@app.route('/toggle_blur')
-def toggle_blur():
-    global blur_background
-    blur_background = not blur_background
-    # Return a JSON response instead of a redirect
-    return jsonify({"status": "success", "blur_active": blur_background})
-
-# =========================
-# RUN APP
-# =========================
 if __name__ == '__main__':
-
-    app.run(
-        host='0.0.0.0',
-        port=5000,
-        debug=True
-    )
+    app.run(host='0.0.0.0', port=5000, debug=True)
