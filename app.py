@@ -29,8 +29,10 @@ face_cascade = cv2.CascadeClassifier(
 db_url = os.environ.get("DATABASE_URL")
 
 if db_url:
+    # If the URL exists (Cloud mode), use it directly
     conn = psycopg2.connect(db_url)
 else:
+    # If no URL (Local mode), use your laptop's settings
     conn = psycopg2.connect(
         host="localhost",
         database="surveillance_db",
@@ -38,6 +40,8 @@ else:
         password="admin123",
         port="5432"
     )
+
+cursor = conn.cursor()
 # =========================
 # CAMERA SETUP
 # =========================
