@@ -31,7 +31,7 @@ face_cascade = cv2.CascadeClassifier(
 db_url = os.environ.get("DATABASE_URL")
 
 if db_url:
-    # Use the Railway connection string
+    # Use the cloud database string provided by Railway
     conn = psycopg2.connect(db_url)
 else:
     # Fallback for your local laptop testing
