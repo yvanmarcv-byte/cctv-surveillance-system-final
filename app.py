@@ -22,29 +22,33 @@ face_cascade = cv2.CascadeClassifier(
     cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
 )
 
-# =========================
 # POSTGRESQL CONNECTION
 # =========================
-
-# This looks for DATABASE_URL (Railway's internal) or DATABASE_PUBLIC_URL (External)
-# If neither exists, it falls back to your local settings
+# This looks for the DATABASE_URL provided by Railway.
+# If it doesn't find it (like on your laptop), it falls back to localhost.
 db_url = os.environ.get("DATABASE_URL")
 
-if db_url:
-    # Use the cloud database string provided by Railway
-    conn = psycopg2.connect(db_url)
-else:
-    # Fallback for your local laptop testing
-    conn = psycopg2.connect(
-        host="localhost",
-        database="surveillance_db",
-        user="postgres",
-        password="admin123",
-        port="5432"
-    )
+try:
+    if db_url:
+        # Use the cloud connection string
+        conn = psycopg2.connect(db_url)
+        print("--- CONNECTED TO RAILWAY DATABASE ---")
+    else:
+        # Fallback for your local laptop testing
+        conn = psycopg2.connect(
+            host="localhost",
+            database="surveillance_db",
+            user="postgres",
+            password="admin123",
+            port="5432"
+        )
+        print("--- CONNECTED TO LOCAL DATABASE ---")
+except Exception as e:
+    print(f"--- DATABASE ERROR: {e} ---")
+    conn = None
 
-cursor = conn.cursor()
-
+if conn:
+    cursor = conn.cursor()
 # =========================
 # CAMERA SETUP
 # =========================
