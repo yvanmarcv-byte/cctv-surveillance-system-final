@@ -28,27 +28,16 @@ face_cascade = cv2.CascadeClassifier(
 # If it doesn't find it (like on your laptop), it falls back to localhost.
 db_url = os.environ.get("DATABASE_URL")
 
-try:
-    if db_url:
-        # Use the cloud connection string
-        conn = psycopg2.connect(db_url)
-        print("--- CONNECTED TO RAILWAY DATABASE ---")
-    else:
-        # Fallback for your local laptop testing
-        conn = psycopg2.connect(
-            host="localhost",
-            database="surveillance_db",
-            user="postgres",
-            password="admin123",
-            port="5432"
-        )
-        print("--- CONNECTED TO LOCAL DATABASE ---")
-except Exception as e:
-    print(f"--- DATABASE ERROR: {e} ---")
-    conn = None
-
-if conn:
-    cursor = conn.cursor()
+if db_url:
+    conn = psycopg2.connect(db_url)
+else:
+    conn = psycopg2.connect(
+        host="localhost",
+        database="surveillance_db",
+        user="postgres",
+        password="admin123",
+        port="5432"
+    )
 # =========================
 # CAMERA SETUP
 # =========================
@@ -266,7 +255,6 @@ def logout():
 
 
 if __name__ == '__main__':
-    # Railway assigns a port dynamically; this ensures your app listens to it
+    # This is the most important change for Railway
     port = int(os.environ.get("PORT", 5000))
-    # '0.0.0.0' allows the app to be accessible from the web
-    app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(host='0.0.0.0', port=port)
