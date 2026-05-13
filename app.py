@@ -53,9 +53,8 @@ if conn:
 # CAMERA SETUP
 # =========================
 camera = cv2.VideoCapture(0)
-
 if not camera.isOpened():
-    print("Warning: Camera not available")
+    print("Cloud Mode: No physical camera found. Monitoring will be disabled.")
 
 FRAME_WIDTH = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
 FRAME_HEIGHT = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -267,4 +266,7 @@ def logout():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # Railway assigns a port dynamically; this ensures your app listens to it
+    port = int(os.environ.get("PORT", 5000))
+    # '0.0.0.0' allows the app to be accessible from the web
+    app.run(host='0.0.0.0', port=port, debug=False)
