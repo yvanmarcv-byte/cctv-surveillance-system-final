@@ -1,15 +1,13 @@
-<<<<<<< HEAD
-flask
-=======
-blinker==1.9.0
-click==8.3.3
-colorama==0.4.6
-Flask==3.1.3
-itsdangerous==2.2.0
-Jinja2==3.1.6
-MarkupSafe==3.0.3
-numpy==2.4.4
-opencv-python==4.13.0.92
-psycopg2-binary==2.9.12
-Werkzeug==3.1.8
->>>>>>> 99c47da (Add requirements and ignore virtual environment)
+# Web Framework
+Flask==3.0.2
+
+# Image Processing
+opencv-python==4.9.0.80
+numpy==1.26.4
+
+# Database Connector
+# Use psycopg2-binary for easier installation without local C compilers
+psycopg2-binary==2.9.9
+
+# Utility
+python-dotenv==1.0.1
