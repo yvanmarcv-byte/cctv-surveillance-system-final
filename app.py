@@ -25,13 +25,24 @@ face_cascade = cv2.CascadeClassifier(
 # =========================
 # POSTGRESQL CONNECTION
 # =========================
-conn = psycopg2.connect(
-    host="localhost",
-    database="surveillance_db",
-    user="postgres",
-    password="admin123",
-    port="5432"
-)
+
+# This looks for DATABASE_URL (Railway's internal) or DATABASE_PUBLIC_URL (External)
+# If neither exists, it falls back to your local settings
+db_url = os.getenv("postgresql://postgres:RIimmsfYVEnaPCAjfnEsztEHLUuHtdox@postgres.railway.internal:5432/railway") or os.getenv("postgresql://postgres:RIimmsfYVEnaPCAjfnEsztEHLUuHtdox@viaduct.proxy.rlwy.net:11584/railway")
+
+if db_url:
+    # Running in the Cloud (Railway)
+    conn = psycopg2.connect(db_url)
+else:
+    # Running locally on your laptop
+    conn = psycopg2.connect(
+        host="localhost",
+        database="surveillance_db",
+        user="postgres",
+        password="admin123",
+        port="5432"
+    )
+
 cursor = conn.cursor()
 
 # =========================
