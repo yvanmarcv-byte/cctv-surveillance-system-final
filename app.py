@@ -28,13 +28,13 @@ face_cascade = cv2.CascadeClassifier(
 
 # This looks for DATABASE_URL (Railway's internal) or DATABASE_PUBLIC_URL (External)
 # If neither exists, it falls back to your local settings
-db_url = os.getenv("postgresql://postgres:RIimmsfYVEnaPCAjfnEsztEHLUuHtdox@postgres.railway.internal:5432/railway") or os.getenv("postgresql://postgres:RIimmsfYVEnaPCAjfnEsztEHLUuHtdox@viaduct.proxy.rlwy.net:11584/railway")
+db_url = os.environ.get("DATABASE_URL")
 
 if db_url:
-    # Running in the Cloud (Railway)
+    # Use the Railway connection string
     conn = psycopg2.connect(db_url)
 else:
-    # Running locally on your laptop
+    # Fallback for your local laptop testing
     conn = psycopg2.connect(
         host="localhost",
         database="surveillance_db",
@@ -121,26 +121,24 @@ def generate_frames():
 def start_recording():
     global is_recording, video_writer
     if not is_recording:
-        if not os.path.exists('recordings'):
-            os.makedirs('recordings')
+        # Get the absolute path to the project directory
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        recordings_dir = os.path.join(base_dir, 'recordings')
+
+        if not os.path.exists(recordings_dir):
+            os.makedirs(recordings_dir)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Switching back to .mp4 but using a more generic codec
-        filename = f"recordings/capture_{timestamp}.mp4"
+        filename = os.path.join(recordings_dir, f"capture_{timestamp}.mp4")
 
-        # DIVX is very stable on Windows/OpenCV
-        fourcc = cv2.VideoWriter_fourcc(*'DIVX')
-
+        # Use 'avc1' or 'mp4v' for better compatibility on Linux/Web
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         video_writer = cv2.VideoWriter(filename, fourcc, 20.0, (FRAME_WIDTH, FRAME_HEIGHT))
 
-        # Check if it actually opened to prevent the C++ crash
         if not video_writer.isOpened():
-            print("Error: VideoWriter failed to open.")
-            return jsonify({"status": "error", "message": "Codec not supported"}), 500
+            return jsonify({"status": "error", "message": "Could not start video writer"}), 500
 
         is_recording = True
-        print(f"Recording started: {filename}")
-
     return jsonify({"status": "success"})
 
 
