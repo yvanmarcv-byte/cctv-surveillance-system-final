@@ -268,6 +268,10 @@ def register():
     return render_template('register.html')
 
 
+# ========================================================
+# USER AUTHENTICATION ROUTING SYSTEM
+# ========================================================
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -276,15 +280,13 @@ def login():
         if cursor.fetchone():
             session['user'] = username
 
-            # --- UPDATED: Grab IP and track authentication login ---
-            user_ip = request.remote_addr
+            user_ip = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
             cursor.execute(
                 "INSERT INTO login_logs (username, ip_address) VALUES (%s, %s)",
                 (username, user_ip)
             )
             conn.commit()
             return redirect('/')
-
     return render_template('login.html')
 
 
@@ -292,7 +294,6 @@ def login():
 def logout():
     session.pop('user', None)
     return redirect('/login')
-
 
 # ========================================================
 # SURVEILLANCE DASHBOARD AND RECORDING HOOKS
