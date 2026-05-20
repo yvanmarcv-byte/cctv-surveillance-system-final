@@ -122,12 +122,14 @@ if conn:
         conn.rollback()
 
 # ========================================================
-# HARDWARE / CAMERA CONFIGURATION
+# ADAPTIVE HARDWARE CAMERA CAPTURE LAYER
 # ========================================================
 camera = cv2.VideoCapture(0)
+CLOUD_MODE = False
 
 if not camera.isOpened():
-    print("Warning: Camera not available (Expected in Cloud Mode)")
+    print("--- WARNING: Physical camera hardware absent. Running secure cloud simulation mode. ---")
+    CLOUD_MODE = True
     FRAME_WIDTH, FRAME_HEIGHT = 640, 480
 else:
     FRAME_WIDTH = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -138,83 +140,101 @@ CAM_FPS_DEFAULT = 30
 
 
 # ========================================================
-# ANALYTICS ENGINE: LIVE FRAME GENERATOR
+# ANALYTICS ENGINE: LIVE FRAME GENERATOR (ADAPTIVE)
 # ========================================================
 def generate_frames():
-    global is_recording, video_writer
+    global is_recording, video_writer, CLOUD_MODE
     prev_time = 0
-    first_frame = None  # Floating-point (float32) background baseline
-    motion_cooldown = 0  # Prevents spamming the logs database
+    first_frame = None
+    motion_cooldown = 0
 
     while True:
-        success, frame = camera.read()
-        if not success:
-            break
+        if CLOUD_MODE:
+            # Generate a clean system status telemetry slide if running on Render servers
+            frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
+            # Draw abstract radar grid patterns
+            cv2.circle(frame, (320, 240), int(100 + (time.time() % 2) * 20), (0, 35, 0), 2)
+            cv2.line(frame, (20, 240), (620, 240), (0, 40, 0), 1)
+            cv2.line(frame, (320, 20), (320, 460), (0, 40, 0), 1)
+
+            cv2.putText(frame, "CLOUD NODE ACTIVE", (50, 200), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 215, 0), 2)
+            cv2.putText(frame, f"TIME: {datetime.now().strftime('%H:%M:%S')}", (50, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                        (0, 150, 0), 2)
+            cv2.putText(frame, "Awaiting Local Node Gateway Sync...", (50, 290), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                        (0, 120, 0), 1)
+
+            # Simulated compression latency
+            time.sleep(0.04)
+            output_frame = frame
+        else:
+            success, frame = camera.read()
+            if not success:
+                break
+            output_frame = frame.copy()
 
         current_time = time.time()
-        fps_real = 1 / (current_time - prev_time) if (current_time - prev_time) > 0 else 30
         prev_time = current_time
 
-        output_frame = frame.copy()
+        # Only process OpenCV Computer Vision processing matrix blocks if live camera exists
+        if not CLOUD_MODE:
+            # ----------------------------------------
+            # SYSTEM A: MOTION DETECTION
+            # ----------------------------------------
+            motion_detected = False
+            gray_motion = cv2.cvtColor(output_frame, cv2.COLOR_BGR2GRAY)
+            gray_motion = cv2.GaussianBlur(gray_motion, (21, 21), 0)
 
-        # ----------------------------------------
-        # SYSTEM A: MOTION DETECTION
-        # ----------------------------------------
-        motion_detected = False
-        gray_motion = cv2.cvtColor(output_frame, cv2.COLOR_BGR2GRAY)
-        gray_motion = cv2.GaussianBlur(gray_motion, (21, 21), 0)
-
-        if first_frame is None:
-            first_frame = np.float32(gray_motion)
-            continue
-
-        cv2.accumulateWeighted(gray_motion, first_frame, 0.5)
-        background_uint8 = cv2.convertScaleAbs(first_frame)
-
-        frame_delta = cv2.absdiff(background_uint8, gray_motion)
-        thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
-        thresh = cv2.dilate(thresh, None, iterations=2)
-
-        contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        for contour in contours:
-            if cv2.contourArea(contour) < 5000:
+            if first_frame is None:
+                first_frame = np.float32(gray_motion)
                 continue
 
-            motion_detected = True
-            (x, y, w, h) = cv2.boundingRect(contour)
-            cv2.rectangle(output_frame, (x, y), (x + w, y + h), (0, 0, 255), 2)  # Red Alert Box
+            cv2.accumulateWeighted(gray_motion, first_frame, 0.5)
+            background_uint8 = cv2.convertScaleAbs(first_frame)
 
-        # ----------------------------------------
-        # TELEMETRY ALERTS & DATABASE LOGS
-        # ----------------------------------------
-        if motion_detected:
-            cv2.putText(output_frame, "MOTION DETECTED", (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+            frame_delta = cv2.absdiff(background_uint8, gray_motion)
+            thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
+            thresh = cv2.dilate(thresh, None, iterations=2)
 
-            if conn and (current_time - motion_cooldown > 5):
-                try:
-                    log_cursor = conn.cursor()
-                    log_cursor.execute(
-                        "INSERT INTO camera_logs (camera_name, status) VALUES (%s, %s)",
-                        ("Cam 01", "MOTION DETECTED")
-                    )
-                    conn.commit()
-                    log_cursor.close()
-                    motion_cooldown = current_time
-                    print("--- DB UPDATE: Motion Detected Saved! ---")
-                except Exception as e:
-                    print(f"Failed to log motion event: {e}")
+            contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        # ----------------------------------------
-        # SYSTEM B: FACE DETECTION
-        # ----------------------------------------
-        gray_face = cv2.cvtColor(output_frame, cv2.COLOR_BGR2GRAY)
-        gray_face = cv2.equalizeHist(gray_face)
-        faces = face_cascade.detectMultiScale(gray_face, 1.1, 8, minSize=(50, 50))
+            for contour in contours:
+                if cv2.contourArea(contour) < 5000:
+                    continue
 
-        for (x, y, w, h) in faces:
-            cv2.rectangle(output_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)  # Green Face Box
+                motion_detected = True
+                (x, y, w, h) = cv2.boundingRect(contour)
+                cv2.rectangle(output_frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
+
+            # ----------------------------------------
+            # TELEMETRY ALERTS & DATABASE LOGS
+            # ----------------------------------------
+            if motion_detected:
+                cv2.putText(output_frame, "MOTION DETECTED", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+
+                if conn and (current_time - motion_cooldown > 5):
+                    try:
+                        log_cursor = conn.cursor()
+                        log_cursor.execute(
+                            "INSERT INTO camera_logs (camera_name, status) VALUES (%s, %s)",
+                            ("Cam 01", "MOTION DETECTED")
+                        )
+                        conn.commit()
+                        log_cursor.close()
+                        motion_cooldown = current_time
+                        print("--- DB UPDATE: Motion Detected Saved! ---")
+                    except Exception as e:
+                        print(f"Failed to log motion event: {e}")
+
+            # ----------------------------------------
+            # SYSTEM B: FACE DETECTION
+            # ----------------------------------------
+            gray_face = cv2.cvtColor(output_frame, cv2.COLOR_BGR2GRAY)
+            gray_face = cv2.equalizeHist(gray_face)
+            faces = face_cascade.detectMultiScale(gray_face, 1.1, 8, minSize=(50, 50))
+
+            for (x, y, w, h) in faces:
+                cv2.rectangle(output_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
         # ----------------------------------------
         # ENCODER AND LOCAL DISK WRITER
@@ -246,7 +266,6 @@ def background_cloudinary_upload(local_path, filename):
     try:
         print(f"--- [BACKGROUND THREAD] Starting cloud sync for {filename}... ---")
 
-        # Upload and explicitly convert resource into standard browser H.264 MP4 structures
         upload_result = cloudinary.uploader.upload_large(
             local_path,
             resource_type="video",
@@ -258,7 +277,6 @@ def background_cloudinary_upload(local_path, filename):
         cloudinary_url = upload_result.get("secure_url")
         print(f"--- [BACKGROUND THREAD] Cloudinary Sync Complete! Link: {cloudinary_url} ---")
 
-        # Write secure resource link index into Postgres
         if conn:
             db_cursor = conn.cursor()
             db_cursor.execute(
@@ -269,7 +287,6 @@ def background_cloudinary_upload(local_path, filename):
             db_cursor.close()
             print(f"--- [BACKGROUND THREAD] Asset catalog index complete for {filename}. ---")
 
-        # Discard temporary local cache file safely off the local filesystem
         if os.path.exists(local_path):
             os.remove(local_path)
             print(f"--- [BACKGROUND THREAD] Local disk cache cleaned up. ---")
@@ -281,7 +298,6 @@ def background_cloudinary_upload(local_path, filename):
 # ========================================================
 # USER AUTHENTICATION ROUTING SYSTEM
 # ========================================================
-
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -296,7 +312,6 @@ def login():
                 if user_match:
                     session['user'] = username
 
-                    # --- SAFE IP TRACKING LAYER ---
                     try:
                         forwarded_for = request.headers.get('X-Forwarded-For')
                         if forwarded_for:
@@ -333,7 +348,6 @@ def logout():
 # ========================================================
 # SURVEILLANCE DASHBOARD AND RECORDING HOOKS
 # ========================================================
-
 @app.route('/')
 def dashboard():
     if 'user' not in session:
@@ -362,12 +376,16 @@ def camera_monitoring():
     if 'user' not in session:
         return redirect('/login')
     return render_template('camera_monitoring.html', user=session['user'], resolution=CAM_RES,
-                           stream_type="MJPEG (Live)", fps=CAM_FPS_DEFAULT, is_recording=is_recording)
+                           stream_type="System Stream", fps=CAM_FPS_DEFAULT, is_recording=is_recording)
 
 
 @app.route('/start_recording')
 def start_recording():
-    global is_recording, video_writer, current_recording_path
+    global is_recording, video_writer, current_recording_path, CLOUD_MODE
+    if CLOUD_MODE:
+        return jsonify({"status": "error",
+                        "message": "Recording directly via cloud infrastructure container is disabled. Run on Localhost Node to capture."}), 400
+
     if not is_recording:
         base_dir = os.path.dirname(os.path.abspath(__file__))
         recordings_dir = os.path.join(base_dir, 'recordings')
