@@ -125,3 +125,58 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 });
+document.addEventListener('DOMContentLoaded', () => {
+    const startBtn = document.getElementById('start-btn');
+    const stopBtn = document.getElementById('stop-btn');
+    const recordStatus = document.getElementById('record-status');
+
+    if (startBtn && stopBtn) {
+        startBtn.addEventListener('click', () => {
+            fetch('/start_recording')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === "success") {
+                        startBtn.style.display = 'none';
+                        stopBtn.style.display = 'inline-block';
+                        stopBtn.textContent = 'Stop Recording'; // Reset button text context
+                        stopBtn.disabled = false;
+
+                        recordStatus.textContent = 'RECORDING';
+                        recordStatus.style.background = '#451a1a';
+                        recordStatus.style.color = '#f87171';
+                        recordStatus.classList.add('active');
+                    }
+                });
+        });
+
+        stopBtn.addEventListener('click', () => {
+            // Visual Validation: Instantly disable button and show processing state
+            stopBtn.disabled = true;
+            stopBtn.style.backgroundColor = '#4b5563'; // Switch to a neutral gray color
+            stopBtn.textContent = 'Processing...';
+            recordStatus.textContent = 'SAVING';
+
+            fetch('/stop_recording')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === "success") {
+                        // Reset control interface states instantly
+                        stopBtn.style.display = 'none';
+                        stopBtn.style.backgroundColor = '#dc2626'; // Revert back to red color
+
+                        startBtn.style.display = 'inline-block';
+
+                        recordStatus.textContent = 'IDLE';
+                        recordStatus.style.background = '#374151';
+                        recordStatus.style.color = '#94a3b8';
+                        recordStatus.classList.remove('active');
+                    }
+                })
+                .catch(err => {
+                    console.error("Stop tracking failure: ", err);
+                    stopBtn.disabled = false;
+                    stopBtn.textContent = 'Stop Recording';
+                });
+        });
+    }
+});

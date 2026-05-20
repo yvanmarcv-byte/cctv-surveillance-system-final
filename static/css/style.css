@@ -266,3 +266,101 @@ table tr:hover {
     font-size: 0.9rem;
     border: 1px solid rgba(248, 113, 113, 0.2);
 }
+
+/* =========================================
+   2. AUTH PAGES (Login & Register)
+   ========================================= */
+.container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    padding: 20px;
+
+    /* Surveillance Background Image Configuration */
+    background:
+        linear-gradient(rgba(15, 23, 42, 0.75), rgba(15, 23, 42, 0.85)), /* Dark overlay for readability */
+        url('/static/images/12910083660851179013.png') no-repeat center center fixed;
+    background-size: cover;
+}
+
+.card {
+    background-color: rgba(31, 41, 55, 0.85); /* Slightly transparent to blend with the background */
+    backdrop-filter: blur(8px); /* Modern glassmorphism blur effect */
+    -webkit-backdrop-filter: blur(8px);
+    padding: 2.5rem;
+    border-radius: 12px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+    width: 100%;
+    max-width: 400px;
+    text-align: center;
+    border: 1px solid rgba(55, 65, 81, 0.7);
+}
+
+.card h1 {
+    margin-bottom: 0.5rem;
+    color: #3b82f6;
+    font-size: 1.8rem;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.card h2 {
+    margin-bottom: 1.5rem;
+    font-weight: 400;
+    font-size: 1.1rem;
+    color: #94a3b8;
+}
+
+.card form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.2rem;
+}
+
+.card input {
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: 1px solid #4b5563;
+    background-color: rgba(17, 24, 39, 0.9); /* Keeps inputs dark and solid */
+    color: white;
+    font-size: 1rem;
+    transition: all 0.2s;
+}
+
+.card input:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
+}
+
+.card button {
+    padding: 12px;
+    background-color: #2563eb;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: background 0.3s ease;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+}
+
+.card button:hover {
+    background-color: #1d4ed8;
+}
+
+.card p {
+    margin-top: 1.5rem;
+    font-size: 0.9rem;
+    color: #94a3b8;
+}
+
+.card p a {
+    color: #3b82f6;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.card p a:hover {
+    text-decoration: underline;
+}

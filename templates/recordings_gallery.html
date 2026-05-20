@@ -34,30 +34,71 @@
     </div>
 
     <div class="main-content">
-        <h1>Saved Clips (Rewind)</h1>
-        <div class="logs-card">
-            <h2>Recording Archives</h2>
+    <h1>Saved Clips (Cloud Rewind)</h1>
+    <div class="logs-card">
+        <h2>Cloud Recording Archives</h2>
 
-            {% if files %}
-                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px;">
-                    {% for file in files %}
-                    <div style="background: #111827; padding: 15px; border-radius: 8px; border: 1px solid #374151;">
-                        <p style="font-size: 0.7rem; color: #3b82f6; margin-bottom: 10px;">{{ file }}</p>
+        {% if videos %}
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px;">
+                {% for video in videos %}
+                <!-- Added an ID to this container div so JavaScript can remove it instantly -->
+                <div id="video-card-{{ video[0] }}" style="background: #111827; padding: 15px; border-radius: 8px; border: 1px solid #374151; display: flex; flex-direction: column; justify-content: space-between;">
 
-                        <video width="100%" controls preload="metadata">
-                            <source src="{{ url_for('video_file', filename=file) }}" type="video/webm">
-                            <source src="{{ url_for('video_file', filename=file) }}" type="video/mp4">
+                    <div>
+                        <!-- video[1] is the filename -->
+                        <p style="font-size: 0.7rem; color: #3b82f6; margin-bottom: 10px;">{{ video[1] }}</p>
+
+                        <video width="100%" controls preload="metadata" style="border-radius: 4px; margin-bottom: 12px;">
+                            <!-- video[2] is the secure Cloudinary streaming URL -->
+                            <source src="{{ video[2] }}" type="video/mp4">
                             Your browser does not support the video tag.
                         </video>
                     </div>
-                    {% endfor %}
-                </div>
-            {% else %}
-                <p style="color: #94a3b8;">No recordings found.</p>
-            {% endif %}
 
-        </div>
+                    <!-- Delete Button Structure -->
+                    <button onclick="deleteVideo('{{ video[0] }}')"
+                            style="width: 100%; padding: 8px; background-color: #dc2626; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; transition: background 0.2s;"
+                            onmouseover="this.style.backgroundColor='#b91c1c'"
+                            onmouseout="this.style.backgroundColor='#dc2626'">
+                        Delete Clip
+                    </button>
+
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p style="color: #94a3b8;">No cloud recordings found.</p>
+        {% endif %}
+
     </div>
+</div>
+
+<!-- Simple inline JavaScript Handler for dynamic UI deletion -->
+<script>
+function deleteVideo(videoId) {
+    if (confirm("Are you sure you want to permanently delete this surveillance recording?")) {
+        fetch('/delete_video/' + videoId, {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                // Dynamically drop the video container from the dashboard view
+                const videoCard = document.getElementById('video-card-' + videoId);
+                if (videoCard) {
+                    videoCard.remove();
+                }
+            } else {
+                alert("Error deleting video: " + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert("A network connection exception occurred.");
+        });
+    }
+}
+</script>
 </div>
 </body>
 </html>

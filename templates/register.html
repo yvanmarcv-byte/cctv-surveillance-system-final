@@ -1,8 +1,10 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <script src="{{ url_for('static', filename='js/script.js') }}" defer></script>
-    <title>Register</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Account - CCTV System</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
@@ -11,25 +13,39 @@
 
     <div class="card">
 
-        <h1>Create Account</h1>
+        <h1>Surveillance System</h1>
+        <h2>Create Account</h2>
 
+        <!-- Dynamically displays validation errors from app.py -->
         {% if error %}
         <p class="error">{{ error }}</p>
         {% endif %}
 
         <form method="POST">
 
-            <input type="text" name="username" placeholder="Username" required>
+            <!-- Username Input -->
+            <input type="text"
+                   name="username"
+                   placeholder="Username"
+                   autocomplete="off"
+                   required>
 
-            <input type="password" name="password" placeholder="Password" required>
+            <!-- Password Input with validation hints -->
+            <input type="password"
+                   name="password"
+                   placeholder="Password (8-20 chars, letter + number)"
+                   minlength="8"
+                   maxlength="20"
+                   required>
 
-            <button type="submit">Register</button>
+            <!-- Submit Button -->
+            <button type="submit">Register Device User</button>
 
         </form>
 
         <p>
-            Already have an account?
-            <a href="/login">Login</a>
+            Already have an authorized account?
+            <a href="/login">Login here</a>
         </p>
 
     </div>
