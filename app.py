@@ -302,7 +302,7 @@ def login():
                     conn.rollback()  # Reset failed transaction state safely
 
             return redirect('/')
-    return render_template('login.html') #asd
+    return render_template('login.html')
 
 
 @app.route('/logout')
