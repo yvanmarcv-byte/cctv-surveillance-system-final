@@ -2,84 +2,134 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Camera Monitoring - CCTV System</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <script src="{{ url_for('static', filename='js/script.js') }}" defer></script>
+    <title>Live Camera Stream Node</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            max-width: 800px;
+            width: 100%;
+            background: #1e293b;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5);
+            text-align: center;
+        }
+        h2 { color: #38bdf8; margin-top: 0; }
+        .video-box {
+            position: relative;
+            width: 100%;
+            max-width: 640px;
+            margin: 0 auto 20px auto;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 2px solid #334155;
+            background: #000;
+        }
+        video {
+            width: 100%;
+            height: auto;
+            display: block;
+            transform: scaleX(-1); /* Mirrors the feed naturally */
+        }
+        .btn {
+            background-color: #0ea5e9;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 1rem;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn:hover { background-color: #0284c7; }
+        .status {
+            margin-top: 10px;
+            font-size: 0.9rem;
+            color: #94a3b8;
+        }
+    </style>
 </head>
 <body>
 
-<div class="dashboard-container">
+<div class="container">
+    <h2>LIVE CAMERA GATEWAY - BROWSER STREAM</h2>
 
-    <div class="sidebar">
-        <div class="sidebar-header">
-            <h2>CCTV System</h2>
-            <p>Welcome, <strong>{{ user }}</strong></p>
-        </div>
-
-        <nav style="margin-top: 20px;">
-            <a href="/">Dashboard</a>
-            <a href="/recordings_gallery">Recordings Gallery</a>
-            <a href="/camera_monitoring">Camera Monitoring</a>
-            <a href="/login_logs">User Logs</a>
-            <a href="/device_management">Device Management</a>
-        </nav>
-
-        <div style="margin-top: auto; padding-top: 20px; border-top: 1px solid #1f2937;">
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 15px;">
-                <span class="status-badge active" style="width: 10px; height: 10px; padding: 0; border-radius: 50%;"></span>
-                <span style="font-size: 0.85rem; color: #f8fafc;">System: Live</span>
-            </div>
-            <a href="/logout" style="color: #f87171; text-decoration: none; font-size: 0.9rem; font-weight: 500; display: block;">
-                Log Out
-            </a>
-        </div>
+    <div class="video-box">
+        <video id="webcam" autoplay playsinline></video>
     </div>
 
-    <div class="main-content">
-        <h1>Camera Monitoring</h1>
-
-        <div class="video-card">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-        <h2>Live Camera Feed - Cam 01</h2>
-        <div id="recording-controls" style="display: flex; gap: 10px; align-items: center;">
-            <span id="record-status" class="status-badge" style="background: #374151; color: #94a3b8;">IDLE</span>
-            <button id="start-btn" class="btn-action" style="background-color: #059669;">Start Recording</button>
-            <button id="stop-btn" class="btn-action" style="background-color: #dc2626; display: none;">Stop Recording</button>
-        </div>
-    </div>
-
-    <div class="video-wrapper">
-        <img src="/video" alt="Live Camera Stream">
-    </div>
-    </div>
-
-            <div style="margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; align-items: stretch;">
-
-                <div style="background: rgba(15, 23, 42, 0.4); padding: 15px; border-radius: 8px; border: 1px solid #374151;">
-                    <h3 style="font-size: 0.8rem; color: #3b82f6; margin-bottom: 10px; text-transform: uppercase;">Stream Details</h3>
-                    <p style="font-size: 0.85rem; color: #94a3b8;">Res: <span style="color: white;">{{ resolution }}</span></p>
-                    <p style="font-size: 0.85rem; color: #94a3b8;">Type: <span style="color: white;">{{ stream_type }}</span></p>
-                    <p style="font-size: 0.85rem; color: #94a3b8;">Speed: <span style="color: #34d399; font-weight: bold;">{{ fps }} FPS</span></p>
-                </div>
-
-                <div style="background: #111827; padding: 15px; border-radius: 8px; border: 1px solid #3b82f6; text-align: center; display: flex; flex-direction: column; justify-content: center;">
-                    <h3 style="font-size: 0.65rem; color: #3b82f6; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px;">System Time</h3>
-                    <div id="monitor-clock" style="font-family: 'Courier New', Courier, monospace; font-size: 1.5rem; font-weight: bold; color: white;">
-                        00:00:00 AM
-                    </div>
-                </div>
-
-                <div style="background: rgba(15, 23, 42, 0.4); padding: 15px; border-radius: 8px; border: 1px solid #374151;">
-                    <h3 style="font-size: 0.8rem; color: #3b82f6; margin-bottom: 10px; text-transform: uppercase;">Privacy Status</h3>
-                    <p style="font-size: 0.85rem; color: #94a3b8;">Face Detection: <span style="color: #34d399; font-weight: bold;">Active</span></p>
-                    <p style="font-size: 0.85rem; color: #94a3b8;">Data Encryption: <span style="color: white;">SSL/TLS</span></p>
-                </div>
-
-            </div>
-        </div>
-    </div>
+    <button class="btn" id="toggle-cam">Initialize Client Camera</button>
+    <p class="status" id="connection-status">Status: Waiting for hardware authorization...</p>
 </div>
+
+<canvas id="frame-processor" width="640" height="480" style="display:none;"></canvas>
+
+<script>
+    const video = document.getElementById('webcam');
+    const toggleBtn = document.getElementById('toggle-cam');
+    const statusText = document.getElementById('connection-status');
+    const canvas = document.getElementById('frame-processor');
+    const context = canvas.getContext('2d');
+
+    let streamActive = false;
+    let frameInterval = null;
+
+    toggleBtn.addEventListener('click', async () => {
+        if (!streamActive) {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 640, height: 480 }
+                });
+
+                video.srcObject = stream;
+                statusText.innerText = "Status: Connected. Streaming frames to Cloud Cluster...";
+                statusText.style.color = "#4ade80";
+                toggleBtn.innerText = "Disconnect Camera";
+                streamActive = true;
+
+                frameInterval = setInterval(transmitFrame, 66);
+            } catch (err) {
+                console.error("Camera Access Denied:", err);
+                statusText.innerText = "Error: Camera access denied or unavailable over non-HTTPS links.";
+                statusText.style.color = "#f87171";
+            }
+        } else {
+            const stream = video.srcObject;
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            video.srcObject = null;
+            clearInterval(frameInterval);
+            toggleBtn.innerText = "Initialize Client Camera";
+            statusText.innerText = "Status: Disconnected.";
+            statusText.style.color = "#94a3b8";
+            streamActive = false;
+        }
+    });
+
+    function transmitFrame() {
+        if (!streamActive) return;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const frameData = canvas.toDataURL('image/jpeg', 0.6);
+
+        fetch('/process_client_frame', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: frameData })
+        })
+        .catch(err => console.error("Network lag:", err));
+    }
+</script>
 
 </body>
 </html>
