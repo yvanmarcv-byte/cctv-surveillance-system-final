@@ -434,22 +434,46 @@ def login_logs():
     if 'user' not in session:
         return redirect('/login')
 
-    try:
-        db_cursor = conn.cursor()
-        # Explicit column order: 0=id, 1=username, 2=ip_address, 3=login_time
-        db_cursor.execute("""
-            SELECT id, username, ip_address, login_time 
-            FROM login_logs 
-            ORDER BY login_time DESC
-        """)
-        logs = db_cursor.fetchall()
-        db_cursor.close()
-    except Exception as e:
-        print(f"--- CRITICAL USER LOGS QUERY ERROR: {e} ---")
-        logs = []  # Prevents template crashing if database query throws a fault
+    logs = []
+    if conn:
+        try:
+            # Open an isolated local request worker cursor
+            db_cursor = conn.cursor()
+            db_cursor.execute("""
+                SELECT id, username, ip_address, login_time 
+                FROM login_logs 
+                ORDER BY login_time DESC
+            """)
+            logs = db_cursor.fetchall()
+            db_cursor.close()
+        except Exception as e:
+            print(f"--- DATABASE ERROR ON LOGIN LOGS: {e} ---")
+            # CRITICAL: Rollback clears the broken transaction state flag instantly!
+            conn.rollback()
+            logs = []
 
     return render_template('login_logs.html', logs=logs, user=session['user'])
 
+
+@app.route('/recordings_gallery')
+def recordings_gallery():
+    if 'user' not in session:
+        return redirect('/login')
+
+    videos = []
+    if conn:
+        try:
+            db_cursor = conn.cursor()
+            db_cursor.execute("SELECT id, filename, cloudinary_url FROM security_videos ORDER BY id DESC")
+            videos = db_cursor.fetchall()
+            db_cursor.close()
+        except Exception as e:
+            print(f"--- DATABASE ERROR ON GALLERY: {e} ---")
+            # Clear transaction blocks if the schema isn't fully ready
+            conn.rollback()
+            videos = []
+
+    return render_template('recordings_gallery.html', videos=videos, user=session['user'])
 @app.route('/delete_video/<int:video_id>', methods=['POST'])
 def delete_video(video_id):
     if 'user' not in session:
