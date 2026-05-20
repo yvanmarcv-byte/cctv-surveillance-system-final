@@ -280,12 +280,27 @@ def login():
         if cursor.fetchone():
             session['user'] = username
 
-            user_ip = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
-            cursor.execute(
-                "INSERT INTO login_logs (username, ip_address) VALUES (%s, %s)",
-                (username, user_ip)
-            )
-            conn.commit()
+            # --- SAFE IP TRACKING LAYER ---
+            try:
+                # Safely grab headers without crashing if they are missing
+                forwarded_for = request.headers.get('X-Forwarded-For')
+                if forwarded_for:
+                    user_ip = forwarded_for.split(',')[0].strip()
+                else:
+                    user_ip = request.remote_addr
+
+                # Attempt inserting into database
+                cursor.execute(
+                    "INSERT INTO login_logs (username, ip_address) VALUES (%s, %s)",
+                    (username, user_ip)
+                )
+                conn.commit()
+            except Exception as log_err:
+                # If column missing or string parsing fails, print error to Railway logs but DO NOT crash the login!
+                print(f"--- WARNING: Could not save login log safely: {log_err} ---")
+                if conn:
+                    conn.rollback()  # Reset failed transaction state safely
+
             return redirect('/')
     return render_template('login.html')
 
