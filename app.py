@@ -9,7 +9,7 @@ import re
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
-import threading  # Added for asynchronous background cloud uploading tasks
+import threading
 import base64
 
 app = Flask(__name__)
@@ -29,10 +29,8 @@ cloudinary.config(
 # GLOBAL SYSTEMS STATE & COMPUTER VISION VARIABLES
 # ========================================================
 is_recording = False
-video_writer = None
-current_recording_path = None
+recording_frames = []  # In-memory storage for recording frames to bypass Render's read-only disk block
 
-# State tracking for the background baseline subtraction matrix
 first_frame = None
 motion_cooldown = 0
 
@@ -40,9 +38,6 @@ FRAME_WIDTH, FRAME_HEIGHT = 640, 480
 CAM_RES = f"{FRAME_WIDTH}x{FRAME_HEIGHT}"
 CAM_FPS_DEFAULT = 30
 
-# ========================================================
-# FACE DETECTION ENGINE SETUP
-# ========================================================
 face_cascade = cv2.CascadeClassifier(
     cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
 )
@@ -51,7 +46,6 @@ face_cascade = cv2.CascadeClassifier(
 # POSTGRESQL DATABASE INTEGRATION & AUTO-MIGRATION
 # ========================================================
 db_url = os.environ.get("DATABASE_URL")
-
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 
@@ -61,18 +55,13 @@ try:
         print("--- CONNECTED TO PRODUCTION DATABASE ---")
     else:
         conn = psycopg2.connect(
-            host="localhost",
-            database="surveillance_db",
-            user="postgres",
-            password="admin123",
-            port="5432"
+            host="localhost", database="surveillance_db", user="postgres", password="admin123", port="5432"
         )
         print("--- CONNECTED TO LOCAL DATABASE ---")
 except Exception as e:
     print(f"--- DATABASE ERROR: {e} ---")
     conn = None
 
-# --- AUTOMATIC TABLE SCHEMA GENERATOR ---
 if conn:
     try:
         cursor = conn.cursor()
@@ -113,66 +102,47 @@ if conn:
             ON CONFLICT (username) DO NOTHING;
         """)
         conn.commit()
-        print("--- DATABASE SCHEMA SEEDING & VERIFICATION COMPLETE ---")
+        print("--- DATABASE SCHEMA SEEDING COMPLETE ---")
     except Exception as migration_err:
-        print(f"--- DATABASE CONFIGURATION/MIGRATION WARNING: {migration_err} ---")
+        print(f"--- DATABASE MIGRATION WARNING: {migration_err} ---")
         conn.rollback()
-
-
-# ========================================================
-# HARDWARE CAMERA FALLBACK (FOR LOCALHOST TESTING ONLY)
-# ========================================================
-# We safely check for hardware without crashing the cloud container engine
-camera = None
-if not os.environ.get("DATABASE_URL"):
-    camera = cv2.VideoCapture(0)
-    if camera.isOpened():
-        FRAME_WIDTH = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
-        FRAME_HEIGHT = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        CAM_RES = f"{FRAME_WIDTH}x{FRAME_HEIGHT}"
-
-
-def generate_frames():
-    """Handles standard MJPEG streaming if testing on local machine hardware directly."""
-    if not camera:
-        return
-    while True:
-        success, frame = camera.read()
-        if not success:
-            break
-        ret, buffer = cv2.imencode('.jpg', frame)
-        if not ret:
-            continue
-        yield (b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-
-
-# ========================================================
-# NETWORK INFRASTRUCTURE BACKEND HOOKS
-# ========================================================
-@app.route('/heartbeat')
-def heartbeat():
-    return jsonify({"status": "healthy", "timestamp": time.time()}), 200
 
 
 # ========================================================
 # ASYNC THREAD WORKER PIPELINE
 # ========================================================
-def background_cloudinary_upload(local_path, filename):
-    """Processes video uploads to Cloudinary securely in the background."""
+def process_and_upload_video(frames_to_upload, filename):
+    """Compiles frames in memory and handles the heavy Cloudinary upload in an isolated background thread."""
     global conn
+    if not frames_to_upload:
+        return
+
     try:
-        print(f"--- [BACKGROUND THREAD] Starting cloud sync for {filename}... ---")
+        print(f"--- [BACKGROUND THREAD] Compiling {len(frames_to_upload)} frames into temporary container... ---")
+
+        # Use Render's verified scratch directory (/tmp) to safely handle the file write bypass
+        temp_path = os.path.join("/tmp", filename)
+
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(temp_path, fourcc, 15.0, (FRAME_WIDTH, FRAME_HEIGHT))
+
+        for frame in frames_to_upload:
+            out.write(frame)
+        out.release()
+
+        print(f"--- [BACKGROUND THREAD] Starting Cloudinary upload for {filename}... ---")
         upload_result = cloudinary.uploader.upload_large(
-            local_path,
+            temp_path,
             resource_type="video",
             folder="cctv_recordings",
             public_id=filename.split('.')[0],
             video_codec="h264"
         )
+
         cloudinary_url = upload_result.get("secure_url")
         print(f"--- [BACKGROUND THREAD] Cloudinary Sync Complete! Link: {cloudinary_url} ---")
 
-        if conn:
+        if conn and cloudinary_url:
             db_cursor = conn.cursor()
             db_cursor.execute(
                 "INSERT INTO security_videos (filename, cloudinary_url) VALUES (%s, %s)",
@@ -180,17 +150,19 @@ def background_cloudinary_upload(local_path, filename):
             )
             conn.commit()
             db_cursor.close()
-            print(f"--- [BACKGROUND THREAD] Asset catalog index complete for {filename}. ---")
+            print("--- [BACKGROUND THREAD] Database Record Successfully Written! ---")
 
-        if os.path.exists(local_path):
-            os.remove(local_path)
-            print(f"--- [BACKGROUND THREAD] Local disk cache cleaned up. ---")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
     except Exception as e:
-        print(f"--- [BACKGROUND THREAD] CRITICAL MEDIA PIPELINE FAILURE: {e} ---")
+        print(f"--- [BACKGROUND THREAD] CRITICAL FAILURE: {e} ---")
+        if conn:
+            conn.rollback()
 
 
 # ========================================================
-# USER AUTHENTICATION ROUTING SYSTEM
+# ROUTING & SURVEILLANCE ENDPOINTS
 # ========================================================
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -208,22 +180,16 @@ def login():
                     try:
                         forwarded_for = request.headers.get('X-Forwarded-For')
                         user_ip = forwarded_for.split(',')[0].strip() if forwarded_for else request.remote_addr
-
                         log_cursor = conn.cursor()
-                        log_cursor.execute(
-                            "INSERT INTO login_logs (username, ip_address) VALUES (%s, %s)",
-                            (username, user_ip)
-                        )
+                        log_cursor.execute("INSERT INTO login_logs (username, ip_address) VALUES (%s, %s)",
+                                           (username, user_ip))
                         conn.commit()
                         log_cursor.close()
                     except Exception as log_err:
-                        print(f"--- WARNING: Could not save login log safely: {log_err} ---")
                         conn.rollback()
                     return redirect('/')
             except Exception as e:
-                print(f"Login database fetch failed: {e}")
-                if conn:
-                    conn.rollback()
+                if conn: conn.rollback()
     return render_template('login.html')
 
 
@@ -233,118 +199,62 @@ def logout():
     return redirect('/login')
 
 
-# ========================================================
-# SURVEILLANCE DASHBOARD AND RECORDING HOOKS
-# ========================================================
 @app.route('/')
 def dashboard():
-    if 'user' not in session:
-        return redirect('/login')
-    try:
-        local_cursor = conn.cursor()
-        local_cursor.execute("SELECT * FROM camera_logs ORDER BY id DESC")
-        logs = local_cursor.fetchall()
-        local_cursor.close()
-    except:
-        if conn:
+    if 'user' not in session: return redirect('/login')
+    logs = []
+    if conn:
+        try:
+            local_cursor = conn.cursor()
+            local_cursor.execute("SELECT * FROM camera_logs ORDER BY id DESC LIMIT 50")
+            logs = local_cursor.fetchall()
+            local_cursor.close()
+        except:
             conn.rollback()
-        logs = []
     return render_template('dashboard.html', logs=logs, user=session['user'])
-
-
-@app.route('/video')
-def video():
-    if 'user' not in session:
-        return redirect('/login')
-    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
 @app.route('/camera_monitoring')
 def camera_monitoring():
-    if 'user' not in session:
-        return redirect('/login')
+    if 'user' not in session: return redirect('/login')
     return render_template('camera_monitoring.html', user=session['user'], resolution=CAM_RES,
-                           stream_type="Browser client WebRTC Stream", fps=CAM_FPS_DEFAULT, is_recording=is_recording)
+                           stream_type="WebRTC Inbound", fps=CAM_FPS_DEFAULT)
 
 
 @app.route('/start_recording')
 def start_recording():
-    global is_recording, video_writer, current_recording_path
+    global is_recording, recording_frames
     if not is_recording:
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        recordings_dir = os.path.join(base_dir, 'recordings')
-        if not os.path.exists(recordings_dir):
-            os.makedirs(recordings_dir)
-
-        filename = f"capture_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
-        current_recording_path = os.path.join(recordings_dir, filename)
-
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        video_writer = cv2.VideoWriter(current_recording_path, fourcc, 20.0, (FRAME_WIDTH, FRAME_HEIGHT))
-
-        if not video_writer.isOpened():
-            return jsonify({"status": "error", "message": "Could not open video writer"}), 500
+        recording_frames = []  # Clear previous memory cache
         is_recording = True
+        print("--- RECORDING ENGINE: Activated (Caching in Memory) ---")
     return jsonify({"status": "success"})
 
 
 @app.route('/stop_recording')
 def stop_recording():
-    global is_recording, video_writer, current_recording_path
+    global is_recording, recording_frames
     if not is_recording:
         return jsonify({"status": "error", "message": "Not currently recording"}), 400
 
     is_recording = False
-    if video_writer:
-        video_writer.release()
-        video_writer = None
+    filename = f"capture_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
 
-    if current_recording_path and os.path.exists(current_recording_path):
-        filename = os.path.basename(current_recording_path)
-        upload_thread = threading.Thread(target=background_cloudinary_upload, args=(current_recording_path, filename))
-        upload_thread.start()
-        current_recording_path = None
-        return jsonify({"status": "success", "message": "Recording processed in background."})
-    return jsonify({"status": "success"})
+    # Deep copy the cached frame array and immediately pass it to our background thread
+    frames_snapshot = list(recording_frames)
+    recording_frames = []
 
+    # Offload the video processing and Cloudinary upload entirely to a background thread
+    upload_thread = threading.Thread(target=process_and_upload_video, args=(frames_snapshot, filename))
+    upload_thread.start()
 
-@app.route('/video_file/<filename>')
-def video_file(filename):
-    if 'user' not in session:
-        return redirect('/login')
-    return send_from_directory('recordings', filename)
-
-
-@app.route('/device_management')
-def device_management():
-    if 'user' not in session:
-        return redirect('/login')
-    devices = [{"name": "Router", "ip": "192.168.1.1", "status": "ONLINE"},
-               {"name": "IP Camera", "ip": "192.168.1.10", "status": "ONLINE"}]
-    return render_template('device_management.html', devices=devices, user=session['user'])
-
-
-@app.route('/login_logs')
-def login_logs():
-    if 'user' not in session:
-        return redirect('/login')
-    logs = []
-    if conn:
-        try:
-            db_cursor = conn.cursor()
-            db_cursor.execute("SELECT id, username, ip_address, login_time FROM login_logs ORDER BY login_time DESC")
-            logs = db_cursor.fetchall()
-            db_cursor.close()
-        except Exception as e:
-            print(f"--- DATABASE ERROR ON LOGIN LOGS: {e} ---")
-            conn.rollback()
-    return render_template('login_logs.html', logs=logs, user=session['user'])
+    print("--- RECORDING ENGINE: Stopped. Processing upload in background thread. ---")
+    return jsonify({"status": "success", "message": "Background upload thread deployed cleanly."})
 
 
 @app.route('/recordings_gallery')
 def recordings_gallery():
-    if 'user' not in session:
-        return redirect('/login')
+    if 'user' not in session: return redirect('/login')
     videos = []
     if conn:
         try:
@@ -353,15 +263,14 @@ def recordings_gallery():
             videos = db_cursor.fetchall()
             db_cursor.close()
         except Exception as e:
-            print(f"--- DATABASE ERROR ON GALLERY: {e} ---")
+            print(f"Gallery SQL Exception: {e}")
             conn.rollback()
     return render_template('recordings_gallery.html', videos=videos, user=session['user'])
 
 
 @app.route('/delete_video/<int:video_id>', methods=['POST'])
 def delete_video(video_id):
-    if 'user' not in session:
-        return jsonify({"status": "error", "message": "Unauthorized"}), 401
+    if 'user' not in session: return jsonify({"status": "error", "message": "Unauthorized"}), 401
     if conn:
         try:
             db_cursor = conn.cursor()
@@ -375,37 +284,56 @@ def delete_video(video_id):
             try:
                 public_id = ("cctv_recordings/" + cloudinary_url.split('/')[-1]).split('.')[0]
                 cloudinary.uploader.destroy(public_id, resource_type="video")
-            except Exception as cloud_err:
-                print(f"Warning: Cloudinary file deletion failed: {cloud_err}")
+            except Exception as e:
+                print(f"Cloudinary delete warning: {e}")
 
             db_cursor.execute("DELETE FROM security_videos WHERE id = %s", (video_id,))
             conn.commit()
             db_cursor.close()
             return jsonify({"status": "success"})
         except Exception as e:
-            print(f"Error during video deletion: {e}")
+            conn.rollback()
             return jsonify({"status": "error", "message": str(e)}), 500
     return jsonify({"status": "error", "message": "Database disconnected"}), 500
 
 
+@app.route('/login_logs')
+def login_logs():
+    if 'user' not in session: return redirect('/login')
+    logs = []
+    if conn:
+        try:
+            db_cursor = conn.cursor()
+            db_cursor.execute("SELECT id, username, ip_address, login_time FROM login_logs ORDER BY login_time DESC")
+            logs = db_cursor.fetchall()
+            db_cursor.close()
+        except:
+            conn.rollback()
+    return render_template('login_logs.html', logs=logs, user=session['user'])
+
+
+@app.route('/device_management')
+def device_management():
+    if 'user' not in session: return redirect('/login')
+    devices = [{"name": "Router", "ip": "192.168.1.1", "status": "ONLINE"},
+               {"name": "IP Camera", "ip": "192.168.1.10", "status": "ONLINE"}]
+    return render_template('device_management.html', devices=devices, user=session['user'])
+
+
 # ========================================================
-# BROWSER CLIENT-FRAME CV ANALYTICS RECIEVER
+# BROWSER CLIENT-FRAME CV ANALYTICS RECEIVER
 # ========================================================
 @app.route('/process_client_frame', methods=['POST'])
 def process_client_frame():
-    """Receives binary base64 frames from the browser and executes computer vision."""
-    global first_frame, motion_cooldown, is_recording, video_writer
-    if 'user' not in session:
-        return jsonify({"status": "unauthorized"}), 401
+    global first_frame, motion_cooldown, is_recording, recording_frames
+    if 'user' not in session: return jsonify({"status": "unauthorized"}), 401
 
     try:
         data = request.get_json()
-        if not data or 'image' not in data:
-            return jsonify({"status": "invalid data"}), 400
+        if not data or 'image' not in data: return jsonify({"status": "invalid data"}), 400
 
         image_data = data['image'].split(',')[1]
         image_bytes = base64.b64decode(image_data)
-
         np_array = np.frombuffer(image_bytes, dtype=np.uint8)
         frame = cv2.imdecode(np_array, cv2.IMREAD_COLOR)
 
@@ -414,18 +342,17 @@ def process_client_frame():
             current_time = time.time()
 
             # ----------------------------------------
-            # COMPUTER VISION PIPELINE A: MOTION DETECTION
+            # COMPUTER VISION: MOTION DETECTION
             # ----------------------------------------
             gray_motion = cv2.cvtColor(output_frame, cv2.COLOR_BGR2GRAY)
             gray_motion = cv2.GaussianBlur(gray_motion, (21, 21), 0)
 
             if first_frame is None:
                 first_frame = np.float32(gray_motion)
-                return jsonify({"status": "calibrating_baseline"}), 200
+                return jsonify({"status": "calibrating"}), 200
 
             cv2.accumulateWeighted(gray_motion, first_frame, 0.5)
             background_uint8 = cv2.convertScaleAbs(first_frame)
-
             frame_delta = cv2.absdiff(background_uint8, gray_motion)
             thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
             thresh = cv2.dilate(thresh, None, iterations=2)
@@ -436,39 +363,33 @@ def process_client_frame():
             if motion_detected and conn and (current_time - motion_cooldown > 5):
                 try:
                     log_cursor = conn.cursor()
-                    log_cursor.execute(
-                        "INSERT INTO camera_logs (camera_name, status) VALUES (%s, %s)",
-                        ("Cam 01 (Web Node)", "MOTION DETECTED")
-                    )
+                    log_cursor.execute("INSERT INTO camera_logs (camera_name, status) VALUES (%s, %s)",
+                                       ("Cam 01", "MOTION DETECTED"))
                     conn.commit()
                     log_cursor.close()
                     motion_cooldown = current_time
-                    print("--- SECURITY LOG: Motion Captured via Web Feed! ---")
                 except Exception as log_err:
-                    print(f"Failed to log web-motion event: {log_err}")
                     conn.rollback()
 
             # ----------------------------------------
-            # COMPUTER VISION PIPELINE B: FACE DETECTION
+            # COMPUTER VISION: FACE DETECTION
             # ----------------------------------------
             gray_face = cv2.cvtColor(output_frame, cv2.COLOR_BGR2GRAY)
             gray_face = cv2.equalizeHist(gray_face)
             faces = face_cascade.detectMultiScale(gray_face, 1.1, 8, minSize=(50, 50))
 
-            # ----------------------------------------
-            # OUTPUT STORAGE FILE WRITER HOOK
-            # ----------------------------------------
-            if is_recording and video_writer is not None and video_writer.isOpened():
-                # Burn detection boxes into raw output matrix if recording is running
-                for (x, y, w, h) in faces:
-                    cv2.rectangle(output_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                if motion_detected:
-                    cv2.putText(output_frame, "MOTION DETECTED", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
-                video_writer.write(output_frame)
+            # Burn drawing matrices to the frame
+            for (x, y, w, h) in faces:
+                cv2.rectangle(output_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            if motion_detected:
+                cv2.putText(output_frame, "MOTION DETECTED", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
 
-        return jsonify({"status": "frame_analyzed", "faces_found": len(faces)}), 200
+            # If the recording engine is active, cache the frame securely in memory
+            if is_recording:
+                recording_frames.append(output_frame)
+
+            return jsonify({"status": "frame_analyzed", "faces_found": len(faces)}), 200
     except Exception as e:
-        print(f"Error processing client browser matrix: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
