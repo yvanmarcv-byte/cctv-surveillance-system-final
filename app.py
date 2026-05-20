@@ -18,10 +18,10 @@ app.secret_key = "secretkey123"
 # CLOUDINARY CONFIGURATION
 # ========================================================
 cloudinary.config(
-  cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", "djgvzkcxa"),
-  api_key = os.environ.get("CLOUDINARY_API_KEY", "423185958454492"),
-  api_secret = os.environ.get("CLOUDINARY_API_SECRET", "9pNxrN_qJkKOJ3R6wnX6R6EKneM"),
-  secure = True
+    cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME", "djgvzkcxa"),
+    api_key=os.environ.get("CLOUDINARY_API_KEY", "423185958454492"),
+    api_secret=os.environ.get("CLOUDINARY_API_SECRET", "9pNxrN_qJkKOJ3R6wnX6R6EKneM"),
+    secure=True
 )
 
 # ========================================================
@@ -39,7 +39,7 @@ face_cascade = cv2.CascadeClassifier(
 )
 
 # ========================================================
-# POSTGRESQL DATABASE INTEGRATION
+# POSTGRESQL DATABASE INTEGRATION & AUTO-MIGRATION
 # ========================================================
 db_url = os.environ.get("DATABASE_URL")
 
@@ -64,8 +64,62 @@ except Exception as e:
     print(f"--- DATABASE ERROR: {e} ---")
     conn = None
 
+# --- AUTOMATIC TABLE SCHEMA GENERATOR ---
 if conn:
-    cursor = conn.cursor()
+    try:
+        cursor = conn.cursor()
+
+        # 1. Users Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(50) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL
+            );
+        """)
+
+        # 2. Security Videos Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS security_videos (
+                id SERIAL PRIMARY KEY,
+                filename VARCHAR(255) NOT NULL,
+                cloudinary_url TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # 3. Camera Activity Logs Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS camera_logs (
+                id SERIAL PRIMARY KEY,
+                camera_name VARCHAR(100) NOT NULL,
+                status VARCHAR(50) NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # 4. User Access Login Logs Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS login_logs (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(50) NOT NULL,
+                ip_address VARCHAR(45),
+                login_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # Seed default administrative account securely if missing
+        cursor.execute("""
+            INSERT INTO users (username, password) 
+            VALUES ('yvan', 'admin123') 
+            ON CONFLICT (username) DO NOTHING;
+        """)
+
+        conn.commit()
+        print("--- DATABASE SCHEMA SEEDING & VERIFICATION COMPLETE ---")
+    except Exception as migration_err:
+        print(f"--- DATABASE CONFIGURATION/MIGRATION WARNING: {migration_err} ---")
+        conn.rollback()
 
 # ========================================================
 # HARDWARE / CAMERA CONFIGURATION
@@ -228,80 +282,45 @@ def background_cloudinary_upload(local_path, filename):
 # USER AUTHENTICATION ROUTING SYSTEM
 # ========================================================
 
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if 'user' in session:
-        return redirect('/')
-
-    if request.method == 'POST':
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '')
-
-        if not username or not password:
-            return render_template('register.html', error="All fields are required.")
-
-        if len(password) < 8 or len(password) > 20:
-            return render_template('register.html', error="Password must be between 8 and 20 characters long.")
-
-        if not re.search(r"[A-Za-z]", password) or not re.search(r"[0-9]", password):
-            return render_template('register.html', error="Password must contain at least one letter and one number.")
-
-        try:
-            cursor.execute("SELECT * FROM users WHERE username=%s", (username,))
-            if cursor.fetchone():
-                return render_template('register.html', error="Username is already registered.")
-
-            cursor.execute("INSERT INTO users (username, password) VALUES (%s, %s)", (username, password))
-            conn.commit()
-
-            # --- UPDATED: Grab IP and track registration log ---
-            user_ip = request.remote_addr
-            session['user'] = username
-            cursor.execute(
-                "INSERT INTO login_logs (username, ip_address) VALUES (%s, %s)",
-                (username, user_ip)
-            )
-            conn.commit()
-
-            return redirect('/')
-
-        except Exception as e:
-            print(f"--- REGISTRATION DATABASE ERROR: {e} ---")
-            return render_template('register.html', error="A system error occurred. Please try again.")
-
-    return render_template('register.html')
-
-
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         username, password = request.form['username'], request.form['password']
-        cursor.execute("SELECT * FROM users WHERE username=%s AND password=%s", (username, password))
-        if cursor.fetchone():
-            session['user'] = username
-
-            # --- SAFE IP TRACKING LAYER ---
+        if conn:
             try:
-                # Safely grab headers without crashing if they are missing
-                forwarded_for = request.headers.get('X-Forwarded-For')
-                if forwarded_for:
-                    user_ip = forwarded_for.split(',')[0].strip()
-                else:
-                    user_ip = request.remote_addr
+                local_cursor = conn.cursor()
+                local_cursor.execute("SELECT * FROM users WHERE username=%s AND password=%s", (username, password))
+                user_match = local_cursor.fetchone()
+                local_cursor.close()
 
-                # Attempt inserting into database
-                cursor.execute(
-                    "INSERT INTO login_logs (username, ip_address) VALUES (%s, %s)",
-                    (username, user_ip)
-                )
-                conn.commit()
-            except Exception as log_err:
-                # If column missing or string parsing fails, print error to logs but DO NOT crash the login!
-                print(f"--- WARNING: Could not save login log safely: {log_err} ---")
+                if user_match:
+                    session['user'] = username
+
+                    # --- SAFE IP TRACKING LAYER ---
+                    try:
+                        forwarded_for = request.headers.get('X-Forwarded-For')
+                        if forwarded_for:
+                            user_ip = forwarded_for.split(',')[0].strip()
+                        else:
+                            user_ip = request.remote_addr
+
+                        log_cursor = conn.cursor()
+                        log_cursor.execute(
+                            "INSERT INTO login_logs (username, ip_address) VALUES (%s, %s)",
+                            (username, user_ip)
+                        )
+                        conn.commit()
+                        log_cursor.close()
+                    except Exception as log_err:
+                        print(f"--- WARNING: Could not save login log safely: {log_err} ---")
+                        conn.rollback()
+
+                    return redirect('/')
+            except Exception as e:
+                print(f"Login database fetch failed: {e}")
                 if conn:
-                    conn.rollback()  # Reset failed transaction state safely
+                    conn.rollback()
 
-            return redirect('/')
     return render_template('login.html')
 
 
@@ -309,6 +328,7 @@ def login():
 def logout():
     session.pop('user', None)
     return redirect('/login')
+
 
 # ========================================================
 # SURVEILLANCE DASHBOARD AND RECORDING HOOKS
@@ -319,9 +339,13 @@ def dashboard():
     if 'user' not in session:
         return redirect('/login')
     try:
-        cursor.execute("SELECT * FROM camera_logs ORDER BY id DESC")
-        logs = cursor.fetchall()
+        local_cursor = conn.cursor()
+        local_cursor.execute("SELECT * FROM camera_logs ORDER BY id DESC")
+        logs = local_cursor.fetchall()
+        local_cursor.close()
     except:
+        if conn:
+            conn.rollback()
         logs = []
     return render_template('dashboard.html', logs=logs, user=session['user'])
 
@@ -368,7 +392,6 @@ def stop_recording():
     if not is_recording:
         return jsonify({"status": "error", "message": "Not currently recording"}), 400
 
-    # Unlatch state context rules instantly
     is_recording = False
     if video_writer:
         video_writer.release()
@@ -377,14 +400,11 @@ def stop_recording():
     if current_recording_path and os.path.exists(current_recording_path):
         filename = os.path.basename(current_recording_path)
 
-        # Offload heavy cloud I/O transfers onto a background sub-thread worker
         upload_thread = threading.Thread(
             target=background_cloudinary_upload,
             args=(current_recording_path, filename)
         )
         upload_thread.start()
-
-        # Wipe tracking token references instantly to avoid collision loops
         current_recording_path = None
 
         return jsonify({
@@ -419,7 +439,6 @@ def login_logs():
     logs = []
     if conn:
         try:
-            # Open an isolated local request worker cursor
             db_cursor = conn.cursor()
             db_cursor.execute("""
                 SELECT id, username, ip_address, login_time 
@@ -430,7 +449,6 @@ def login_logs():
             db_cursor.close()
         except Exception as e:
             print(f"--- DATABASE ERROR ON LOGIN LOGS: {e} ---")
-            # CRITICAL: Rollback clears the broken transaction state flag instantly!
             conn.rollback()
             logs = []
 
@@ -451,7 +469,6 @@ def recordings_gallery():
             db_cursor.close()
         except Exception as e:
             print(f"--- DATABASE ERROR ON GALLERY: {e} ---")
-            # Clear transaction blocks if the schema isn't fully ready
             conn.rollback()
             videos = []
 
@@ -466,7 +483,6 @@ def delete_video(video_id):
     if conn:
         try:
             db_cursor = conn.cursor()
-
             db_cursor.execute("SELECT cloudinary_url FROM security_videos WHERE id = %s", (video_id,))
             row = db_cursor.fetchone()
 
