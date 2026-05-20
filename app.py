@@ -434,13 +434,20 @@ def login_logs():
     if 'user' not in session:
         return redirect('/login')
 
-    # Explicitly asking for the columns in the exact order the HTML loop expects
-    cursor.execute("""
-        SELECT id, username, ip_address, login_time 
-        FROM login_logs 
-        ORDER BY login_time DESC
-    """)
-    logs = cursor.fetchall()
+    try:
+        db_cursor = conn.cursor()
+        # Explicit column order: 0=id, 1=username, 2=ip_address, 3=login_time
+        db_cursor.execute("""
+            SELECT id, username, ip_address, login_time 
+            FROM login_logs 
+            ORDER BY login_time DESC
+        """)
+        logs = db_cursor.fetchall()
+        db_cursor.close()
+    except Exception as e:
+        print(f"--- CRITICAL USER LOGS QUERY ERROR: {e} ---")
+        logs = []  # Prevents template crashing if database query throws a fault
+
     return render_template('login_logs.html', logs=logs, user=session['user'])
 
 @app.route('/delete_video/<int:video_id>', methods=['POST'])

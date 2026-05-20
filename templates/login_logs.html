@@ -43,42 +43,44 @@
         <h1>User Login History</h1>
 
         <div class="logs-card">
-            <h2>Authentication Audit Trail</h2>
-            <table>
-    <thead>
-        <tr>
-            <th>ID</th>
-            <th>Username</th>
-            <th>IP Address</th> <!-- New Table Header -->
-            <th>Action</th>
-            <th>Login Time</th>
-        </tr>
-    </thead>
-    <tbody>
-    {% for log in logs %}
-    <tr>
-        <td>{{ log[0] }}</td>
+    <h2>Authentication Audit Trail</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Username</th>
+                <th>IP Address</th>
+                <th>Action</th>
+                <th>Login Time</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in logs %}
+            <tr>
+                <td>{{ log[0] }}</td>
 
-        <td><strong>{{ log[1] }}</strong></td>
+                <td><strong>{{ log[1] }}</strong></td>
 
-        <td><code>{{ log[2] if log[2] else '127.0.0.1' }}</code></td>
+                <td><code>{{ log[2] if log[2] else '127.0.0.1' }}</code></td>
 
-        <td>
-            <span class="status-badge login">Login</span>
-        </td>
+                <td>
+                    <span class="status-badge login">Login</span>
+                </td>
 
-        <td>
-            {% if log[3] and log[3].strftime %}
-                {{ log[3].strftime('%Y-%m-%d %I:%M %p') }}
-            {% else %}
-                {{ log[3] }}
-            {% endif %}
-        </td>
-    </tr>
-    {% endfor %}
-</tbody>
-</table>
-        </div>
+                <td>
+                    {% if log[3] and log[3].strftime %}
+                        {{ log[3].strftime('%Y-%m-%d %I:%M %p') }}
+                    {% elif log[3] %}
+                        {{ log[3] }}
+                    {% else %}
+                        <span style="color: #64748b; font-style: italic;">No Timestamp</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 
         <p style="color: #94a3b8; font-size: 0.8rem; margin-top: 10px;">
             * Security note: All login attempts are recorded with a timestamp for auditing purposes.
