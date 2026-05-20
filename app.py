@@ -43,10 +43,14 @@ face_cascade = cv2.CascadeClassifier(
 # ========================================================
 db_url = os.environ.get("DATABASE_URL")
 
+# Render compatibility hotfix: ensures string uses "postgresql://" prefix
+if db_url and db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
 try:
     if db_url:
         conn = psycopg2.connect(db_url)
-        print("--- CONNECTED TO RAILWAY DATABASE ---")
+        print("--- CONNECTED TO PRODUCTION DATABASE ---")
     else:
         conn = psycopg2.connect(
             host="localhost",
@@ -268,10 +272,6 @@ def register():
     return render_template('register.html')
 
 
-# ========================================================
-# USER AUTHENTICATION ROUTING SYSTEM
-# ========================================================
-
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -296,7 +296,7 @@ def login():
                 )
                 conn.commit()
             except Exception as log_err:
-                # If column missing or string parsing fails, print error to Railway logs but DO NOT crash the login!
+                # If column missing or string parsing fails, print error to logs but DO NOT crash the login!
                 print(f"--- WARNING: Could not save login log safely: {log_err} ---")
                 if conn:
                     conn.rollback()  # Reset failed transaction state safely
@@ -395,24 +395,6 @@ def stop_recording():
     return jsonify({"status": "success"})
 
 
-@app.route('/recordings_gallery')
-def recordings_gallery():
-    if 'user' not in session:
-        return redirect('/login')
-
-    videos = []
-    if conn:
-        try:
-            db_cursor = conn.cursor()
-            db_cursor.execute("SELECT id, filename, cloudinary_url FROM security_videos ORDER BY id DESC")
-            videos = db_cursor.fetchall()
-            db_cursor.close()
-        except Exception as e:
-            print(f"Error fetching videos from DB: {e}")
-
-    return render_template('recordings_gallery.html', videos=videos, user=session['user'])
-
-
 @app.route('/video_file/<filename>')
 def video_file(filename):
     if 'user' not in session:
@@ -474,6 +456,8 @@ def recordings_gallery():
             videos = []
 
     return render_template('recordings_gallery.html', videos=videos, user=session['user'])
+
+
 @app.route('/delete_video/<int:video_id>', methods=['POST'])
 def delete_video(video_id):
     if 'user' not in session:
