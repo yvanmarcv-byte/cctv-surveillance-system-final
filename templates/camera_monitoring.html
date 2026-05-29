@@ -13,7 +13,7 @@
     <div class="sidebar">
         <div class="sidebar-header">
             <h2>CCTV System</h2>
-            <p>Welcome, <strong>{{ user }}</strong></p>
+            <p>Welcome, <strong>{{ user }}</strong> (<span style="color: #60a5fa; font-weight: 600;">{{ role }}</span>)</p>
         </div>
 
         <nav style="margin-top: 20px;">
@@ -21,7 +21,9 @@
             <a href="/recordings_gallery">Recordings Gallery</a>
             <a href="/camera_monitoring" class="active">Camera Monitoring</a>
             <a href="/login_logs">User Logs</a>
+            {% if role == 'admin' %}
             <a href="/device_management">Device Management</a>
+            {% endif %}
         </nav>
 
         <div style="margin-top: auto; padding-top: 20px; border-top: 1px solid #1f2937;">
@@ -54,7 +56,6 @@
         </div>
 
         <div style="margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; align-items: stretch;">
-
             <div style="background: rgba(15, 23, 42, 0.4); padding: 15px; border-radius: 8px; border: 1px solid #374151;">
                 <h3 style="font-size: 0.8rem; color: #3b82f6; margin-bottom: 10px; text-transform: uppercase;">Stream Details</h3>
                 <p style="font-size: 0.85rem; color: #94a3b8;">Res: <span style="color: white;">{{ resolution }}</span></p>
@@ -64,9 +65,7 @@
 
             <div style="background: #111827; padding: 15px; border-radius: 8px; border: 1px solid #3b82f6; text-align: center; display: flex; flex-direction: column; justify-content: center;">
                 <h3 style="font-size: 0.65rem; color: #3b82f6; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px;">System Time</h3>
-                <div id="monitor-clock" style="font-family: 'Courier New', Courier, monospace; font-size: 1.5rem; font-weight: bold; color: white;">
-                    00:00:00 AM
-                </div>
+                <div id="monitor-clock" style="font-family: 'Courier New', Courier, monospace; font-size: 1.5rem; font-weight: bold; color: white;">00:00:00 AM</div>
             </div>
 
             <div style="background: rgba(15, 23, 42, 0.4); padding: 15px; border-radius: 8px; border: 1px solid #374151;">
@@ -74,7 +73,6 @@
                 <p style="font-size: 0.85rem; color: #94a3b8;">Face Detection: <span style="color: #34d399; font-weight: bold;">Active</span></p>
                 <p style="font-size: 0.85rem; color: #94a3b8;">Data Encryption: <span style="color: white;" id="telemetry-status-log">SSL/TLS Secured</span></p>
             </div>
-
         </div>
     </div>
 </div>
@@ -95,7 +93,7 @@
     let streamActive = false;
     let frameInterval = null;
 
-    // Live running dashboard clock
+    // Synchronize monitoring clocks
     setInterval(() => {
         const now = new Date();
         clockText.innerText = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -103,26 +101,14 @@
 
     startBtn.addEventListener('click', async () => {
         telemetryStatus.innerText = "Requesting webcam permissions...";
-
         try {
-            // High compatibility video configuration fallback constraints
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: true,
-                audio: false
-            });
-
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
             video.srcObject = stream;
-
-            // Wait for video stream meta-layers to bind before executing playback
             video.onloadedmetadata = () => {
-                video.play().catch(e => {
-                    alert("Playback block occurred: " + e.message);
-                });
+                video.play().catch(e => alert("Playback block occurred: " + e.message));
             };
 
             streamActive = true;
-
-            // Flip UI badge status styles dynamically
             badge.innerText = "STREAMING";
             badge.style.background = "#1e3a8a";
             badge.style.color = "#60a5fa";
@@ -130,43 +116,55 @@
             startBtn.style.display = 'none';
             stopBtn.style.display = 'inline-block';
             streamTypeLabel.innerText = "WebRTC (Live Feed)";
-            telemetryStatus.innerText = "Processing streaming pipeline matrices...";
 
-            // Push snapshots to Render backend 15 times a second
+            // Fire snapshots to backend pipeline 15 times per second
             frameInterval = setInterval(transmitFrame, 66);
 
-            fetch('/start_recording').catch(err => console.error("Database tracking loop issue:", err));
-
+            fetch('/start_recording').catch(err => console.error("API tracking fault:", err));
         } catch (err) {
-            console.error("Critical Webcam capture block:", err);
-            telemetryStatus.innerText = "Error: Stream access blocked.";
-            telemetryStatus.style.color = "#f87171";
-
-            // Pop up the exact technical block details so we can trace it instantly
-            alert("Webcam Initialization Error Details: " + err.name + " - " + err.message + "\n\nEnsure you are using HTTPS:// link prefixes!");
+            alert("Webcam Initialization Error Details: " + err.name + " - " + err.message + "\n\nEnsure you are using HTTPS!");
         }
     });
 
     stopBtn.addEventListener('click', () => {
+        // CRITICAL UPDATE: HARD IMMUNITY GATEWAY FOR BACKEND TAIL-LAG STALE BUFFER CORRUPTION
+        streamActive = false;
+        clearInterval(frameInterval); // Kill frame transmit loop instantly *before* network execution strings
+
+        // Drop physical hardware collection frames
         const stream = video.srcObject;
         if (stream) {
             stream.getTracks().forEach(track => track.stop());
         }
         video.srcObject = null;
-        streamActive = false;
-        clearInterval(frameInterval);
 
-        badge.innerText = "IDLE";
-        badge.style.background = "#374151";
-        badge.style.color = "#94a3b8";
+        // Force UI processing adjustments instantly
+        stopBtn.disabled = true;
+        stopBtn.style.backgroundColor = '#4b5563';
+        stopBtn.textContent = 'Processing...';
+        badge.innerText = 'SAVING';
 
-        startBtn.style.display = 'inline-block';
-        stopBtn.style.display = 'none';
-        streamTypeLabel.innerText = "WebRTC Client Stream";
-        telemetryStatus.innerText = "SSL/TLS Secured";
-        telemetryStatus.style.color = "#ffffff";
+        // Direct request dispatch sequence to background server thread compilers
+        fetch('/stop_recording')
+            .then(res => res.json())
+            .then(data => {
+                stopBtn.style.display = 'none';
+                stopBtn.style.backgroundColor = '#dc2626';
+                stopBtn.textContent = 'Stop Recording';
+                stopBtn.disabled = false;
 
-        fetch('/stop_recording').catch(err => console.error("Record termination error:", err));
+                startBtn.style.display = 'inline-block';
+                badge.innerText = "IDLE";
+                badge.style.background = "#374151";
+                badge.style.color = "#94a3b8";
+                streamTypeLabel.innerText = "WebRTC Client Stream";
+                telemetryStatus.innerText = "SSL/TLS Secured";
+            })
+            .catch(err => {
+                console.error("Stop sequence loop attrition failure: ", err);
+                stopBtn.disabled = false;
+                stopBtn.textContent = 'Stop Recording';
+            });
     });
 
     function transmitFrame() {
@@ -190,12 +188,11 @@
                     telemetryStatus.style.color = "#94a3b8";
                 }
             })
-            .catch(err => console.error("Data packet delay notification:", err));
+            .catch(err => console.error("Network synchronization delay payload drop:", err));
         } catch (canvasErr) {
-            console.error("Canvas read error:", canvasErr);
+            console.error("Canvas internal state reading error:", canvasErr);
         }
     }
 </script>
-
 </body>
 </html>
