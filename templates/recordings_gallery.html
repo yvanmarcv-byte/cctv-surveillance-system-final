@@ -11,15 +11,17 @@
     <div class="sidebar">
         <div class="sidebar-header">
             <h2>CCTV System</h2>
-            <p>Welcome, <strong>{{ user }}</strong></p>
+            <p>Welcome, <strong>{{ user }}</strong> (<span style="color: #60a5fa; font-weight: 600;">{{ role }}</span>)</p>
         </div>
 
         <nav style="margin-top: 20px;">
             <a href="/">Dashboard</a>
-            <a href="/recordings_gallery">Recordings Gallery</a>
+            <a href="/recordings_gallery" class="active">Recordings Gallery</a>
             <a href="/camera_monitoring">Camera Monitoring</a>
             <a href="/login_logs">User Logs</a>
+            {% if role == 'admin' %}
             <a href="/device_management">Device Management</a>
+            {% endif %}
         </nav>
 
         <div style="margin-top: auto; padding-top: 20px; border-top: 1px solid #1f2937;">
@@ -34,46 +36,49 @@
     </div>
 
     <div class="main-content">
-    <h1>Saved Clips (Cloud Rewind)</h1>
-    <div class="logs-card">
-        <h2>Cloud Recording Archives</h2>
+        <h1>Saved Clips (Cloud Rewind)</h1>
+        <div class="logs-card">
+            <h2>Cloud Recording Archives</h2>
 
-        {% if videos %}
-            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px;">
-                {% for video in videos %}
-                <!-- Added an ID to this container div so JavaScript can remove it instantly -->
-                <div id="video-card-{{ video[0] }}" style="background: #111827; padding: 15px; border-radius: 8px; border: 1px solid #374151; display: flex; flex-direction: column; justify-content: space-between;">
+            {% if videos %}
+                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px;">
+                    {% for video in videos %}
+                    <div id="video-card-{{ video.id }}" style="background: #111827; padding: 15px; border-radius: 8px; border: 1px solid #374151; display: flex; flex-direction: column; justify-content: space-between;">
 
-                    <div>
-                        <!-- video[1] is the filename -->
-                        <p style="font-size: 0.7rem; color: #3b82f6; margin-bottom: 10px;">{{ video[1] }}</p>
+                        <div>
+                            <p style="font-size: 0.7rem; color: #3b82f6; margin-bottom: 10px;">{{ video.filename }}</p>
 
-                        <video width="100%" controls preload="metadata" style="border-radius: 4px; margin-bottom: 12px;">
-                            <!-- video[2] is the secure Cloudinary streaming URL -->
-                            <source src="{{ video[2] }}" type="video/mp4">
-                            Your browser does not support the video tag.
-                        </video>
+                            <video width="100%" controls preload="metadata" style="border-radius: 4px; margin-bottom: 12px;">
+                                <source src="{{ video.cloudinary_url }}" type="video/mp4">
+                                Your browser does not support the video tag.
+                            </video>
+                        </div>
+
+                        {% if role == 'admin' %}
+                        <button onclick="deleteVideo('{{ video.id }}')"
+                                style="width: 100%; padding: 8px; background-color: #dc2626; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; transition: background 0.2s;"
+                                onmouseover="this.style.backgroundColor='#b91c1c'"
+                                onmouseout="this.style.backgroundColor='#dc2626'">
+                            Delete Clip
+                        </button>
+                        {% else %}
+                        <div style="text-align: center; font-size: 0.75rem; color: #64748b; padding: 8px; background: #1f2937; border-radius: 6px;">
+                            Deletion Locked (Admin Only)
+                        </div>
+                        {% endif %}
+
                     </div>
-
-                    <!-- Delete Button Structure -->
-                    <button onclick="deleteVideo('{{ video[0] }}')"
-                            style="width: 100%; padding: 8px; background-color: #dc2626; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; transition: background 0.2s;"
-                            onmouseover="this.style.backgroundColor='#b91c1c'"
-                            onmouseout="this.style.backgroundColor='#dc2626'">
-                        Delete Clip
-                    </button>
-
+                    {% endfor %}
                 </div>
-                {% endfor %}
-            </div>
-        {% else %}
-            <p style="color: #94a3b8;">No cloud recordings found.</p>
-        {% endif %}
+            {% else %}
+                <p style="color: #94a3b8;">No cloud recordings found.</p>
+            {% endif %}
 
+        </div>
     </div>
+
 </div>
 
-<!-- Simple inline JavaScript Handler for dynamic UI deletion -->
 <script>
 function deleteVideo(videoId) {
     if (confirm("Are you sure you want to permanently delete this surveillance recording?")) {
@@ -83,7 +88,7 @@ function deleteVideo(videoId) {
         .then(response => response.json())
         .then(data => {
             if (data.status === 'success') {
-                // Dynamically drop the video container from the dashboard view
+                // Dynamically extract card element layout frame node from Document Object Model
                 const videoCard = document.getElementById('video-card-' + videoId);
                 if (videoCard) {
                     videoCard.remove();
@@ -99,6 +104,5 @@ function deleteVideo(videoId) {
     }
 }
 </script>
-</div>
 </body>
 </html>

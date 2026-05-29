@@ -4,3 +4,4 @@ numpy>=1.26.4
 psycopg2-binary
 python-dotenv>=1.0.1
 cloudinary>=1.39.0
+gunicorn>=22.0.0

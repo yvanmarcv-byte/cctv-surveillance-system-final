@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <script src="{{ url_for('static', filename='js/script.js') }}" defer></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>User Logs - CCTV System</title>
@@ -10,83 +9,59 @@
 <body>
 
 <div class="dashboard-container">
-
-    <!-- System Navigation Sidebar -->
     <div class="sidebar">
         <div class="sidebar-header">
             <h2>CCTV System</h2>
-            <p>Welcome, <strong>{{ user }}</strong></p>
+            <p>Welcome, <strong>{{ user }}</strong> (<span style="color:#60a5fa;">{{ role }}</span>)</p>
         </div>
-
         <nav style="margin-top: 20px;">
             <a href="/">Dashboard</a>
             <a href="/recordings_gallery">Recordings Gallery</a>
             <a href="/camera_monitoring">Camera Monitoring</a>
-            <a href="/login_logs">User Logs</a>
+            <a href="/login_logs" class="active">User Logs</a>
+            {% if role == 'admin' %}
             <a href="/device_management">Device Management</a>
+            {% endif %}
         </nav>
-
         <div style="margin-top: auto; padding-top: 20px; border-top: 1px solid #1f2937;">
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 15px;">
-                <span class="status-badge active" style="width: 10px; height: 10px; padding: 0; border-radius: 50%;"></span>
-                <span style="font-size: 0.85rem; color: #f8fafc;">System: Live</span>
-            </div>
-
-            <a href="/logout" style="color: #f87171; text-decoration: none; font-size: 0.9rem; font-weight: 500; display: block;">
-                Log Out
-            </a>
+            <a href="/logout" style="color: #f87171; text-decoration: none; font-size: 0.9rem; font-weight: 500; display: block;">Log Out</a>
         </div>
     </div>
 
-    <!-- Main Content Panel -->
     <div class="main-content">
-        <h1>User Login History</h1>
-
+        <h1>Comprehensive Audit Trail Logs</h1>
         <div class="logs-card">
-    <h2>Authentication Audit Trail</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>Username</th>
-                <th>IP Address</th>
-                <th>Action</th>
-                <th>Login Time</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for log in logs %}
-            <tr>
-                <td>{{ log[0] }}</td>
-
-                <td><strong>{{ log[1] }}</strong></td>
-
-                <td><code>{{ log[2] if log[2] else '127.0.0.1' }}</code></td>
-
-                <td>
-                    <span class="status-badge login">Login</span>
-                </td>
-
-                <td>
-                    {% if log[3] and log[3].strftime %}
-                        {{ log[3].strftime('%Y-%m-%d %I:%M %p') }}
-                    {% elif log[3] %}
-                        {{ log[3] }}
-                    {% else %}
-                        <span style="color: #64748b; font-style: italic;">No Timestamp</span>
-                    {% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
-
-        <p style="color: #94a3b8; font-size: 0.8rem; margin-top: 10px;">
-            * Security note: All login attempts are recorded with a timestamp for auditing purposes.
-        </p>
+            <h2>System Event Records</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>User Anchor</th>
+                        <th>Action Performed Sequence</th>
+                        <th>IP Address Tracker</th>
+                        <th>Execution Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                    <tr>
+                        <td>{{ log[0] }}</td>
+                        <td><strong>{{ log[1] }}</strong></td>
+                        <td><span style="color:#e2e8f0;">{{ log[2] }}</span></td>
+                        <td><code>{{ log[3] if log[3] else '127.0.0.1' }}</code></td>
+                        <td>
+                            {% if log[4] and log[4].strftime %}
+                                {{ log[4].strftime('%Y-%m-%d %I:%M:%p %p') }}
+                            {% else %}
+                                {{ log[4] }}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
-
 </div>
 
 </body>
