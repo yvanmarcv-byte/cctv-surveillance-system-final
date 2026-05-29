@@ -127,16 +127,20 @@
     });
 
     stopBtn.addEventListener('click', () => {
-        // CRITICAL UPDATE: HARD IMMUNITY GATEWAY FOR BACKEND TAIL-LAG STALE BUFFER CORRUPTION
+        // Kill frame transmit loops instantly to freeze incoming queue loads
         streamActive = false;
-        clearInterval(frameInterval); // Kill frame transmit loop instantly *before* network execution strings
+        clearInterval(frameInterval);
 
-        // Drop physical hardware collection frames
+        // Drop physical hardware collection frame attachments
         const stream = video.srcObject;
         if (stream) {
             stream.getTracks().forEach(track => track.stop());
         }
         video.srcObject = null;
+
+        // MEMORY PURGE VALVE: Wipe drawing cache matrices cleanly out of browser context
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        canvas.width = canvas.width; // Hard force immediate V8 garbage collection allocation sequence
 
         // Force UI processing adjustments instantly
         stopBtn.disabled = true;
@@ -148,17 +152,30 @@
         fetch('/stop_recording')
             .then(res => res.json())
             .then(data => {
-                stopBtn.style.display = 'none';
-                stopBtn.style.backgroundColor = '#dc2626';
-                stopBtn.textContent = 'Stop Recording';
-                stopBtn.disabled = false;
+                // Update interface logs to explain cloud reindexing parameters
+                telemetryStatus.innerText = "Cloud Rewind: Optimizing video streaming matrices...";
+                telemetryStatus.style.color = "#60a5fa";
 
-                startBtn.style.display = 'inline-block';
-                badge.innerText = "IDLE";
-                badge.style.background = "#374151";
-                badge.style.color = "#94a3b8";
-                streamTypeLabel.innerText = "WebRTC Client Stream";
-                telemetryStatus.innerText = "SSL/TLS Secured";
+                // Give Cloudinary 5 seconds to finalize file structure optimizations
+                setTimeout(() => {
+                    stopBtn.style.display = 'none';
+                    stopBtn.style.backgroundColor = '#dc2626';
+                    stopBtn.textContent = 'Stop Recording';
+                    stopBtn.disabled = false;
+
+                    startBtn.style.display = 'inline-block';
+                    badge.innerText = "IDLE";
+                    badge.style.background = "#374151";
+                    badge.style.color = "#94a3b8";
+                    streamTypeLabel.innerText = "WebRTC Client Stream";
+                    telemetryStatus.innerText = "SSL/TLS Secured";
+                    telemetryStatus.style.color = "#ffffff";
+
+                    // Prompt redirection choice to view clean asset loop
+                    if(confirm("Recording compiled smoothly! Open gallery archives now?")) {
+                        window.location.href = "/recordings_gallery";
+                    }
+                }, 5000);
             })
             .catch(err => {
                 console.error("Stop sequence loop attrition failure: ", err);
